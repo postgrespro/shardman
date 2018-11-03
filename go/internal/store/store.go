@@ -20,15 +20,15 @@ type KVPair struct {
 }
 
 type ClusterStore interface {
-	GetRepGroups(ctx context.Context) (map[int]*cluster.RepGroupData, *KVPair, error)
+	GetRepGroups(ctx context.Context) (map[int]*cluster.RepGroup, *KVPair, error)
 }
 
-type ClusterStoreImpl struct {
+type clusterStoreImpl struct {
 	storePath string
 	store     etcdV3Store
 }
 
-func NewClusterStore(cfg *cmdcommon.CommonConfig) (*ClusterStoreImpl, error) {
+func NewClusterStore(cfg *cmdcommon.CommonConfig) (*clusterStoreImpl, error) {
 	var endpoints []string
 
 	if cfg.StoreEndpoints == "" {
@@ -46,11 +46,39 @@ func NewClusterStore(cfg *cmdcommon.CommonConfig) (*ClusterStoreImpl, error) {
 	}
 	etcdstore := etcdV3Store{c: cli}
 	storePath := filepath.Join("hodgepodge", cfg.ClusterName)
-	return &ClusterStoreImpl{storePath: storePath, store: etcdstore}, nil
+	return &clusterStoreImpl{storePath: storePath, store: etcdstore}, nil
 }
 
-func (cs *ClusterStoreImpl) GetRepGroups(ctx context.Context) (map[int]*cluster.RepGroupData, *KVPair, error) {
-	var rgdata map[int]*cluster.RepGroupData
+// Get global cluster data
+func (cs *clusterStoreImpl) GetClusterData(ctx context.Context) (*cluster.ClusterData, *KVPair, error) {
+	var cldata = &cluster.ClusterData{}
+	path := filepath.Join(cs.storePath, "clusterdata")
+	pair, err := cs.store.Get(ctx, path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if pair == nil {
+		return nil, nil, nil
+	}
+	if err := json.Unmarshal(pair.Value, cldata); err != nil {
+		return nil, nil, err
+	}
+	return cldata, pair, nil
+}
+
+// Put global cluster data
+func (cs *clusterStoreImpl) PutClusterData(ctx context.Context, cldata cluster.ClusterData) error {
+	cldataj, err := json.Marshal(cldata)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(cs.storePath, "clusterdata")
+	return cs.store.Put(ctx, path, cldataj)
+}
+
+// Get all Stolons connection info
+func (cs *clusterStoreImpl) GetRepGroups(ctx context.Context) (map[int]*cluster.RepGroup, *KVPair, error) {
+	var rgdata map[int]*cluster.RepGroup
 	path := filepath.Join(cs.storePath, "repgroups")
 	pair, err := cs.store.Get(ctx, path)
 	if err != nil {
@@ -65,6 +93,36 @@ func (cs *ClusterStoreImpl) GetRepGroups(ctx context.Context) (map[int]*cluster.
 	return rgdata, pair, nil
 }
 
-func (cs *ClusterStoreImpl) Close() error {
+// Put replication groups info
+func (cs *clusterStoreImpl) PutRepGroups(ctx context.Context, rgs map[int]*cluster.RepGroup) error {
+	rgsj, err := json.Marshal(rgs)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(cs.storePath, "repgroups")
+	return cs.store.Put(ctx, path, rgsj)
+}
+
+// Save info about sharded tables
+func (cs *clusterStoreImpl) PutTables(ctx context.Context, tables []cluster.Table) error {
+	tablesj, err := json.Marshal(tables)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(cs.storePath, "tables")
+	return cs.store.Put(ctx, path, tablesj)
+}
+
+// Save current masters for each repgroup
+func (cs *clusterStoreImpl) PutMasters(ctx context.Context, masters map[int]*cluster.Master) error {
+	mastersj, err := json.Marshal(masters)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(cs.storePath, "masters")
+	return cs.store.Put(ctx, path, mastersj)
+}
+
+func (cs *clusterStoreImpl) Close() error {
 	return cs.store.Close()
 }

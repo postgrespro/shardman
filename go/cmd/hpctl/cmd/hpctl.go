@@ -25,11 +25,6 @@ func CheckConfig(cfg *cmdcommon.CommonConfig) error {
 var rootCmd = &cobra.Command{
 	Use:   "hpctl",
 	Short: "hodgepodge command line client",
-	PersistentPreRun: func(c *cobra.Command, args []string) {
-		if err := CheckConfig(&cfg); err != nil {
-			die(err.Error())
-		}
-	},
 	// bare command does nothing
 }
 
@@ -46,7 +41,7 @@ var cmdVersion = &cobra.Command{
 	Use:   "version",
 	Short: "Display the version",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("hpctl v0.1")
+		fmt.Println("hpctl v0.0.1")
 	},
 }
 
@@ -54,7 +49,8 @@ var cmdVersion = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(cmdVersion)
 
-	rootCmd.PersistentFlags().StringVar(&cfg.StoreEndpoints, "store-endpoints", "", "a comma-delimited list of store endpoints (use https scheme for tls communication) (defaults: http://127.0.0.1:2379)")
+	rootCmd.PersistentFlags().StringVar(&cfg.StoreEndpoints, "store-endpoints",
+		"http://127.0.0.1:2379", "a comma-delimited list of store endpoints (use https scheme for tls communication)")
 	rootCmd.PersistentFlags().StringVar(&cfg.ClusterName, "cluster-name", "", "cluster name")
 }
 
