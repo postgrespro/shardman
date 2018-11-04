@@ -25,18 +25,11 @@ type ClusterStore interface {
 
 type clusterStoreImpl struct {
 	storePath string
-	store     etcdV3Store
+	store     EtcdV3Store
 }
 
 func NewClusterStore(cfg *cmdcommon.CommonConfig) (*clusterStoreImpl, error) {
-	var endpoints []string
-
-	if cfg.StoreEndpoints == "" {
-		endpoints = DefaultEtcdEndpoints[:]
-	} else {
-		endpoints = strings.Split(cfg.StoreEndpoints, ",")
-	}
-
+	endpoints := strings.Split(cfg.StoreEndpoints, ",")
 	cli, err := etcdclientv3.New(etcdclientv3.Config{
 		Endpoints: endpoints,
 		TLS:       nil,
@@ -44,7 +37,7 @@ func NewClusterStore(cfg *cmdcommon.CommonConfig) (*clusterStoreImpl, error) {
 	if err != nil {
 		return nil, err
 	}
-	etcdstore := etcdV3Store{c: cli}
+	etcdstore := EtcdV3Store{c: cli}
 	storePath := filepath.Join("hodgepodge", cfg.ClusterName)
 	return &clusterStoreImpl{storePath: storePath, store: etcdstore}, nil
 }

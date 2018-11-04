@@ -34,5 +34,5 @@ type Table struct {
 // Master connection info
 type Master struct {
 	ListenAddress string
-	Port          int
+	Port          string
 }

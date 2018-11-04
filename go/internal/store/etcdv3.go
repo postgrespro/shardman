@@ -16,18 +16,22 @@ const (
 // There are no array consts in go
 var DefaultEtcdEndpoints = [...]string{"http://127.0.0.1:2379"}
 
-type etcdV3Store struct {
+type EtcdV3Store struct {
 	c *etcdclientv3.Client
 }
 
-func (s *etcdV3Store) Put(pctx context.Context, key string, value []byte) error {
+func NewEtcdV3Store(cli *etcdclientv3.Client) EtcdV3Store {
+	return EtcdV3Store{c: cli}
+}
+
+func (s *EtcdV3Store) Put(pctx context.Context, key string, value []byte) error {
 	ctx, cancel := context.WithTimeout(pctx, requestTimeout)
 	_, err := s.c.Put(ctx, key, string(value))
 	cancel()
 	return err
 }
 
-func (s *etcdV3Store) Get(pctx context.Context, key string) (*KVPair, error) {
+func (s *EtcdV3Store) Get(pctx context.Context, key string) (*KVPair, error) {
 	ctx, cancel := context.WithTimeout(pctx, requestTimeout)
 	resp, err := s.c.Get(ctx, key)
 	cancel()
@@ -42,6 +46,6 @@ func (s *etcdV3Store) Get(pctx context.Context, key string) (*KVPair, error) {
 		LastIndex: uint64(kv.ModRevision)}, nil
 }
 
-func (s *etcdV3Store) Close() error {
+func (s *EtcdV3Store) Close() error {
 	return s.c.Close()
 }

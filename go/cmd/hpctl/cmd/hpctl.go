@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	cmdcommon "postgrespro.ru/hodgepodge/cmd"
+	"postgrespro.ru/hodgepodge/internal/store"
 )
 
 // Here we will store args
@@ -50,7 +51,7 @@ func init() {
 	rootCmd.AddCommand(cmdVersion)
 
 	rootCmd.PersistentFlags().StringVar(&cfg.StoreEndpoints, "store-endpoints",
-		"http://127.0.0.1:2379", "a comma-delimited list of store endpoints (use https scheme for tls communication)")
+		store.DefaultEtcdEndpoints[0], "a comma-delimited list of store endpoints (use https scheme for tls communication)")
 	rootCmd.PersistentFlags().StringVar(&cfg.ClusterName, "cluster-name", "", "cluster name")
 }
 
