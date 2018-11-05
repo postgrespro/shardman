@@ -3,8 +3,14 @@
 script_dir=`dirname "$(readlink -f "$0")"`
 source "${script_dir}/common.sh"
 
-cd "${script_dir}/.."
-go install
+# install ext
+cd "${script_dir}/../ext"
+make clean
+make install
+
+# build go
+cd "${script_dir}/../go"
+make
 
 pkill stolon-keeper || true
 pkill stolon-sentinel || true
@@ -13,6 +19,8 @@ pkill etcd || true
 
 rm -rf "{etcd_datadir}"
 nohup etcd --data-dir "${etcd_datadir}" >/tmp/etcd.log 2>&1 &
+# let etcd start
+sleep 5
 
 i=0
 for cluster in $(seq 1 $clusters); do
@@ -26,24 +34,6 @@ for cluster in $(seq 1 $clusters); do
 	let "i+=1"
     done
 done
-
-exit 1
-for datadir in $lord_datadir "${worker_datadirs[@]}"; do
-    rm -rf "$datadir"
-    mkdir -p "$datadir"
-    initdb --no-sync -D "$datadir"
-done
-
-send_configs
-
-start_nodes
-for port in $lord_port "${worker_ports[@]}"; do
-    createdb -p $port `whoami`
-    echo "creating pg_shardman extension..."
-    psql -p $port -c "create extension pg_shardman cascade;"
-done
-
-restart_nodes
 
 run_demo
 

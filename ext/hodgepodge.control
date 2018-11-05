@@ -1,0 +1,10 @@
+comment = 'A bunch of stuff forming sharding'
+# CREATE EXTENSION will run extname--version.sql file
+default_version = '0.0.1'
+# TODO: make ext relocatable at least during installation. For that, we need to
+# * learn the scheme when connecting from another node
+# * add @extschema@ to search path where needed, e.g. in all trigger funcs
+# * Prepend schema name to all shardman funcs calls from C code
+relocatable = false
+schema = hodgepodge
+requires = 'postgres_fdw'

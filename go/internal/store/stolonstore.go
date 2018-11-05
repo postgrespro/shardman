@@ -1,7 +1,7 @@
 // Some functions to work with Stolon data. Yeah, peeking private data is not
 // nice, but Stolon doesn't expose any API (no way to include internal packages)
 // and exec'ing stolonctl is not nice either
-package stolonstore
+package store
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 
 type StolonStore struct {
 	storePath string
-	store     store.EtcdV3Store
+	store     EtcdV3Store
 }
 
 func NewStolonStore(rg *cluster.RepGroup) (*StolonStore, error) {
@@ -47,7 +47,7 @@ func NewStolonStore(rg *cluster.RepGroup) (*StolonStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	etcdstore := store.NewEtcdV3Store(cli)
+	etcdstore := NewEtcdV3Store(cli)
 	storePath := filepath.Join(rg.StorePrefix, rg.StolonName)
 	return &StolonStore{storePath: storePath, store: etcdstore}, nil
 }
@@ -103,7 +103,7 @@ type ClusterSpec struct {
 }
 
 // Okay, let's try to avoid touching internals this time
-func StolonUpdate(rg *cluster.RepGroup, patch bool, spec cluster.StolonSpec) error {
+func StolonUpdate(rg *cluster.RepGroup, patch bool, spec *cluster.StolonSpec) error {
 	specj, err := json.Marshal(spec)
 	if err != nil {
 		return err

@@ -4,10 +4,13 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 
 	etcdclientv3 "go.etcd.io/etcd/clientv3"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
+
 	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 )
@@ -60,7 +63,7 @@ func (cs *clusterStoreImpl) GetClusterData(ctx context.Context) (*cluster.Cluste
 }
 
 // Put global cluster data
-func (cs *clusterStoreImpl) PutClusterData(ctx context.Context, cldata cluster.ClusterData) error {
+func (cs *clusterStoreImpl) PutClusterData(ctx context.Context, cldata *cluster.ClusterData) error {
 	cldataj, err := json.Marshal(cldata)
 	if err != nil {
 		return err
@@ -96,6 +99,22 @@ func (cs *clusterStoreImpl) PutRepGroups(ctx context.Context, rgs map[int]*clust
 	return cs.store.Put(ctx, path, rgsj)
 }
 
+func (cs *clusterStoreImpl) GetTables(ctx context.Context) ([]cluster.Table, *KVPair, error) {
+	var tables []cluster.Table
+	path := filepath.Join(cs.storePath, "tables")
+	pair, err := cs.store.Get(ctx, path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if pair == nil {
+		return nil, nil, nil
+	}
+	if err := json.Unmarshal(pair.Value, &tables); err != nil {
+		return nil, nil, err
+	}
+	return tables, pair, nil
+}
+
 // Save info about sharded tables
 func (cs *clusterStoreImpl) PutTables(ctx context.Context, tables []cluster.Table) error {
 	tablesj, err := json.Marshal(tables)
@@ -118,4 +137,57 @@ func (cs *clusterStoreImpl) PutMasters(ctx context.Context, masters map[int]*clu
 
 func (cs *clusterStoreImpl) Close() error {
 	return cs.store.Close()
+}
+
+func patchClusterSpec(spec *cluster.StolonSpec, patch *cluster.StolonSpec) (*cluster.StolonSpec, error) {
+	specj, err := json.Marshal(spec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal cluster spec: %v", err)
+	}
+	patchj, err := json.Marshal(patch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal cluster spec: %v", err)
+	}
+
+	newspecj, err := strategicpatch.StrategicMergePatch(specj, patchj, &cluster.StolonSpec{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge patch cluster spec: %v", err)
+	}
+	var newspec *cluster.StolonSpec
+	if err := json.Unmarshal(newspecj, &newspec); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal patched cluster spec: %v", err)
+	}
+	return newspec, nil
+}
+
+// Broadcast new stolon spec to all stolons and update it in store
+func (cs *clusterStoreImpl) UpdateStolonSpec(ctx context.Context, spec *cluster.StolonSpec, patch bool) error {
+	cldata, _, err := cs.GetClusterData(ctx)
+	if err != nil {
+		return err
+	}
+
+	currentspec := cldata.StolonSpec
+	var newspec *cluster.StolonSpec
+	if patch {
+		newspec, err = patchClusterSpec(currentspec, spec)
+		if err != nil {
+			return err
+		}
+	} else {
+		newspec = spec
+	}
+
+	rgs, _, err := cs.GetRepGroups(ctx)
+	if err != nil {
+		return err
+	}
+	for _, rg := range rgs {
+		if err = StolonUpdate(rg, false, newspec); err != nil {
+			return err
+		}
+	}
+
+	cldata.StolonSpec = newspec
+	return cs.PutClusterData(ctx, cldata)
 }

@@ -26,6 +26,9 @@ var initCmd = &cobra.Command{
 		if err := CheckConfig(&cfg); err != nil {
 			die(err.Error())
 		}
+		if initcfg.pgSuAuthMethod != "trust" && initcfg.pgSuPassword == "" {
+			die("Password not provided and authmethod is not trust")
+		}
 	},
 }
 
@@ -34,7 +37,7 @@ func init() {
 
 	initCmd.Flags().StringVar(&initcfg.pgSuAuthMethod, "pg-su-auth-method",
 		"scram-sha-256",
-		"postgres superuser auth method")
+		"postgres superuser auth method. Only trust, md5 and scram-sha-256 are supported")
 	initCmd.Flags().StringVar(&initcfg.pgSuPassword, "pg-su-password",
 		"", "postgres superuser password")
 	user, err := user.Current()
@@ -54,11 +57,11 @@ func initCluster(cmd *cobra.Command, args []string) {
 	}
 	defer cs.Close()
 
-	rg, _, err := cs.GetRepGroups(context.TODO())
+	cldata, _, err := cs.GetClusterData(context.TODO())
 	if err != nil {
-		die("cannot get rep groups data: %v", err)
+		die("cannot get cluster data: %v", err)
 	}
-	if rg != nil {
+	if cldata != nil {
 		stdout("WARNING: overriding existing cluster")
 	}
 
@@ -74,13 +77,26 @@ func initCluster(cmd *cobra.Command, args []string) {
 	if err != nil {
 		die("failed to save repgroup data in store")
 	}
-	cldata := cluster.ClusterData{
+	// We configure access for su from anywhere. TODO: allow more restrictive
+	stolonspec := &cluster.StolonSpec{
+		PGHBA: []string{
+			"host all " + initcfg.pgSuUsername + " 0.0.0.0/0 " + initcfg.pgSuAuthMethod,
+			"host all " + initcfg.pgSuUsername + " ::0/0 " + initcfg.pgSuAuthMethod},
+		PGParameters: map[string]string{
+			"log_statement":             "all",
+			"log_line_prefix":           "%m [%r][%p]",
+			"log_min_messages":          "INFO",
+			"max_prepared_transactions": "100",
+		},
+	}
+	cldatanew := &cluster.ClusterData{
 		FormatVersion:  cluster.CurrentFormatVersion,
 		PgSuAuthMethod: initcfg.pgSuAuthMethod,
 		PgSuPassword:   initcfg.pgSuPassword,
 		PgSuUsername:   initcfg.pgSuUsername,
+		StolonSpec:     stolonspec,
 	}
-	err = cs.PutClusterData(context.TODO(), cldata)
+	err = cs.PutClusterData(context.TODO(), cldatanew)
 	if err != nil {
 		die("failed to save clusterdata in store")
 	}
