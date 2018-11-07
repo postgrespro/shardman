@@ -13,20 +13,6 @@ import (
 	"postgrespro.ru/hodgepodge/internal/store"
 )
 
-// Form super connstr for this master
-func FormSuConnstr(master *cluster.Master, cldata *cluster.ClusterData) string {
-	cp := map[string]string{
-		"user":   cldata.PgSuUsername,
-		"dbname": "postgres",
-		"host":   master.ListenAddress,
-		"port":   master.Port,
-	}
-	if cldata.PgSuAuthMethod != "trust" {
-		cp["password"] = cldata.PgSuPassword
-	}
-	return ConnString(cp)
-}
-
 // Broadcaster
 
 type Broadcaster struct {
@@ -173,19 +159,13 @@ func NewBroadcaster(rgs map[int]*cluster.RepGroup, cldata *cluster.ClusterData) 
 
 	// learn connstrs
 	for rgid, rg := range rgs {
-		ss, err := store.NewStolonStore(rg)
-		if err != nil {
-			return nil, err
-		}
-		defer ss.Close()
-
-		master, err := ss.GetMaster(context.TODO())
+		connstr, err := GetSuConnstr(rg, cldata)
 		if err != nil {
 			return nil, err
 		}
 		bcst.conns[rgid] = &BroadcastConn{
 			in:      make(chan interface{}),
-			connstr: FormSuConnstr(master, cldata),
+			connstr: connstr,
 		}
 	}
 
@@ -290,16 +270,67 @@ func (bcst *Broadcaster) Close() {
 
 // Connstring stuff
 
+func GetSuConnstr(rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, error) {
+	cp, err := store.GetSuConnstrMap(context.TODO(), rg, cldata)
+	if err != nil {
+		return "", err
+	}
+	return ConnString(cp), nil
+}
+
 // ConnString returns a connection string, its entries are sorted so the
 // returned string can be reproducible and comparable
 func ConnString(p map[string]string) string {
 	var kvs []string
-	escaper := strings.NewReplacer(` `, `\ `, `'`, `\'`, `\`, `\\`)
+	escaper := strings.NewReplacer(`'`, `\'`, `\`, `\\`)
 	for k, v := range p {
 		if v != "" {
-			kvs = append(kvs, k+"="+escaper.Replace(v))
+			var val string = fmt.Sprintf("%s", escaper.Replace(v))
+			if k == "port" {
+				val = v /* pgx complains on port='5432' */
+			}
+			kvs = append(kvs, fmt.Sprintf("%s=%s", k, val))
 		}
 	}
 	sort.Sort(sort.StringSlice(kvs))
 	return strings.Join(kvs, " ")
+}
+
+// postgres_fdw accepts user/password params in user mapping opts and
+// everything else in foreign server ones...
+func FormUserMappingOpts(p map[string]string) string {
+	res := fmt.Sprintf("options (user %s", LI(p["user"]))
+	if password, ok := p["password"]; ok {
+		res = fmt.Sprintf("%s, password %s", res, LI(password))
+	}
+	return fmt.Sprintf("%s)", res)
+}
+func FormForeignServerOpts(p map[string]string) string {
+	res := fmt.Sprintf("options (dbname %s, host %s, port '%s')",
+		LI(p["dbname"]),
+		LI(p["host"]),
+		p["port"])
+	return res
+}
+
+// PG's quote_identifier. FIXME keywords
+func QI(ident string) string {
+	var safe = true
+	for _, r := range ident {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || (r == '_')) {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return ident
+	}
+	var sql_ident_escaper = strings.NewReplacer(`"`, `""`)
+	return fmt.Sprintf("\"%s\"", sql_ident_escaper.Replace(ident))
+}
+
+// PG's quote literal
+func LI(lit string) string {
+	var sql_str_escaper = strings.NewReplacer(`'`, `''`)
+	return fmt.Sprintf("'%s'", sql_str_escaper.Replace(lit))
 }

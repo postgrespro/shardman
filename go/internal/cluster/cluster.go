@@ -34,7 +34,7 @@ type RepGroup struct {
 
 // Sharded tables
 type Table struct {
-	Relname string
+	Relname string // unquoted
 	Sql     string // CREATE TABLE statement
 	Nparts  int
 	Partmap []int // part num -> repgroup id mapping
@@ -197,4 +197,6 @@ type StolonSpec struct {
 	// Additional pg_hba.conf entries
 	// we don't set omitempty since we want to distinguish between null or empty slice
 	PGHBA []string `json:"pgHBA"`
+	// Enable automatic pg restart when pg parameters that requires restart changes
+	AutomaticPgRestart *bool `json:"automaticPgRestart"`
 }

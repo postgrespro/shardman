@@ -182,12 +182,37 @@ func (cs *clusterStoreImpl) UpdateStolonSpec(ctx context.Context, spec *cluster.
 	if err != nil {
 		return err
 	}
-	for _, rg := range rgs {
-		if err = StolonUpdate(rg, false, newspec); err != nil {
+	for rgid, rg := range rgs {
+		if err = StolonUpdate(rg, rgid, false, newspec); err != nil {
 			return err
 		}
 	}
 
 	cldata.StolonSpec = newspec
 	return cs.PutClusterData(ctx, cldata)
+}
+
+// Get current connstr for this rg as map of libpq options
+func GetSuConnstrMap(ctx context.Context, rg *cluster.RepGroup, cldata *cluster.ClusterData) (map[string]string, error) {
+	ss, err := NewStolonStore(rg)
+	if err != nil {
+		return nil, err
+	}
+	defer ss.Close()
+
+	master, err := ss.GetMaster(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	cp := map[string]string{
+		"user":   cldata.PgSuUsername,
+		"dbname": "postgres",
+		"host":   master.ListenAddress,
+		"port":   master.Port,
+	}
+	if cldata.PgSuAuthMethod != "trust" {
+		cp["password"] = cldata.PgSuPassword
+	}
+	return cp, nil
 }

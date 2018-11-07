@@ -78,6 +78,7 @@ func initCluster(cmd *cobra.Command, args []string) {
 		die("failed to save repgroup data in store")
 	}
 	// We configure access for su from anywhere. TODO: allow more restrictive
+	autopgrestart := true // apparently no way in go to get addr of literal
 	stolonspec := &cluster.StolonSpec{
 		PGHBA: []string{
 			"host all " + initcfg.pgSuUsername + " 0.0.0.0/0 " + initcfg.pgSuAuthMethod,
@@ -88,6 +89,7 @@ func initCluster(cmd *cobra.Command, args []string) {
 			"log_min_messages":          "INFO",
 			"max_prepared_transactions": "100",
 		},
+		AutomaticPgRestart: &autopgrestart,
 	}
 	cldatanew := &cluster.ClusterData{
 		FormatVersion:  cluster.CurrentFormatVersion,

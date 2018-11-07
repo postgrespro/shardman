@@ -5,3 +5,4 @@ source "${script_dir}/common.sh"
 
 hpctl init --cluster-name haha --store-endpoints localhost:2379 --pg-su-auth-method trust
 hpctl addrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_1
+hpctl addrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_2

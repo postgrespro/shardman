@@ -1,3 +1,4 @@
 *.o
 *.so
 .dir-locals.el
+.deps

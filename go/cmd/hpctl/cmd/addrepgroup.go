@@ -61,29 +61,14 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		die("cluster %v not found", cfg.ClusterName)
 	}
 
-	// TODO: wait until config is actually applied
-	err = store.StolonUpdate(&newrg, true, cldata.StolonSpec)
+	connstr, err := pg.GetSuConnstr(&newrg, cldata)
 	if err != nil {
-		die(err.Error())
+		die("Couldn't get connstr: %v", err)
 	}
 
-	ss, err := store.NewStolonStore(&newrg)
+	connconfig, err := pgx.ParseConnectionString(connstr)
 	if err != nil {
-		die("failed to create Stolon store: %v", err)
-	}
-	defer ss.Close()
-
-	master, err := ss.GetMaster(context.TODO())
-	if err != nil {
-		die("failed to get Stolon master: %v", err)
-	}
-	if master == nil {
-		die("stolon's clusterdata not found")
-	}
-
-	connconfig, err := pgx.ParseConnectionString(pg.FormSuConnstr(master, cldata))
-	if err != nil {
-		die("connstring parsing failed") // should not happen
+		die("connstring parsing \"%s\" failed: %v", connstr, err) // should not happen
 	}
 	conn, err := pgx.Connect(connconfig)
 	if err != nil {
@@ -98,17 +83,6 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	err = conn.QueryRow("select system_identifier from pg_control_system()").Scan(&newrg.SystemId)
 	if err != nil {
 		die("Failed to retrieve sysid: %v", err)
-	}
-
-	tables, _, err := cs.GetTables(context.TODO())
-	if err != nil {
-		die("Failed to get tables from store: %v", err)
-	}
-	for _, table := range tables {
-		_, err = conn.Exec(table.Sql)
-		if err != nil {
-			die("Failed to create table: %v", err)
-		}
 	}
 
 	rgs, _, err := cs.GetRepGroups(context.TODO())
@@ -127,6 +101,12 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	newrgid++
 	rgs[newrgid] = &newrg
 
+	// TODO: wait until config is actually applied
+	err = store.StolonUpdate(&newrg, newrgid, true, cldata.StolonSpec)
+	if err != nil {
+		die(err.Error())
+	}
+
 	bcst, err := pg.NewBroadcaster(rgs, cldata)
 	if err != nil {
 		die("Failed to create broadcaster: %v", err)
@@ -134,39 +114,57 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	defer bcst.Close()
 
 	bcst.Begin()
-	bcst.Push(newrgid, "fewfew")
-	bcst.Push(newrgid, "select 2::text")
-	res, err := bcst.Commit(true)
+	// create foreign servers to all rgs at newrg and vice versa
+	newrgconnstrmap, err := store.GetSuConnstrMap(context.TODO(), &newrg, cldata)
+	newrgumopts := pg.FormUserMappingOpts(newrgconnstrmap)
+	newrgfsopts := pg.FormForeignServerOpts(newrgconnstrmap)
+	if err != nil {
+		die("Failed to get new rg connstr")
+	}
+	for rgid, rg := range rgs {
+		if rgid == newrgid {
+			continue
+		}
+		rgconnstrmap, err := store.GetSuConnstrMap(context.TODO(), rg, cldata)
+		if err != nil {
+			die("Failed to get rg %s connstr", rg.StolonName)
+		}
+		rgumopts := pg.FormUserMappingOpts(rgconnstrmap)
+		rgfsopts := pg.FormForeignServerOpts(rgconnstrmap)
+		bcst.Push(newrgid, fmt.Sprintf("drop server if exists hp_rg_%d cascade", rgid))
+		bcst.Push(newrgid, fmt.Sprintf("create server hp_rg_%d foreign data wrapper postgres_fdw %s", rgid, rgfsopts))
+		bcst.Push(rgid, fmt.Sprintf("drop server if exists hp_rg_%d cascade", newrgid))
+		bcst.Push(rgid, fmt.Sprintf("create server hp_rg_%d foreign data wrapper postgres_fdw %s", newrgid, newrgfsopts))
+		bcst.Push(newrgid, fmt.Sprintf("drop user mapping if exists for current_user server hp_rg_%d", rgid))
+		bcst.Push(newrgid, fmt.Sprintf("create user mapping for current_user server hp_rg_%d %s", rgid, rgumopts))
+		bcst.Push(rgid, fmt.Sprintf("drop user mapping if exists for current_user server hp_rg_%d", newrgid))
+		bcst.Push(rgid, fmt.Sprintf("create user mapping for current_user server hp_rg_%d %s", newrgid, newrgumopts))
+	}
+	// create tables and foreign partitions
+	tables, _, err := cs.GetTables(context.TODO())
+	if err != nil {
+		die("Failed to get tables from store: %v", err)
+	}
+	for _, table := range tables {
+		bcst.Push(newrgid, table.Sql)
+		for pnum := 0; pnum < table.Nparts; pnum++ {
+			bcst.Push(newrgid, fmt.Sprintf("create foreign table %s partition of %s for values with (modulus %d, remainder %d) server %s options (table_name %s)",
+				pg.QI(table.Relname+"_"+string(pnum)+"_fdw"),
+				pg.QI(table.Relname),
+				table.Nparts,
+				pnum,
+				"hp_rg_"+string(table.Partmap[pnum]),
+				pg.QI(table.Relname+"_"+string(pnum))))
+		}
+	}
+	_, err = bcst.Commit(true)
 	if err != nil {
 		die("bcst failed: %v", err)
 	}
-	fmt.Printf("res is %v", res)
 
-	// _, err = conn.Exec("drop table if exists dd")
-	// _, err = conn.Exec("create table t (i int)")
-	// if err != nil {
-	// die(err.Error())
-	// }
-	// _, err = conn.Exec("insert into tt values (10)")
-	// rows, err := conn.Query("prepare transaction 'fewfwe'")
-	// if err != nil {
-	// die("Unable to create table dd: %v", err)
-	// }
-
-	// for rows.Next() {
-	// 	var n int32
-	// 	err = rows.Scan(&n)
-	// 	fmt.Printf(string(n))
-	// }
-	// if rows.Err() != nil {
-	// 	die("rows err failed", rows.Err().Error())
-	// }
-	// _, err = conn.Exec("insert into t values (10)")
-	// if err != nil {
-	// die("insert err %v", err)
-	// }
-	// err = tx.Rollback()
-	// if err != nil {
-	// die("ahaha %v", err.Error())
-	// }
+	// TODO make atomic
+	err = cs.PutRepGroups(context.TODO(), rgs)
+	if err != nil {
+		die("failed to save repgroup data in store: %v", err)
+	}
 }
