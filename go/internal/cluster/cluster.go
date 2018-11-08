@@ -34,10 +34,11 @@ type RepGroup struct {
 
 // Sharded tables
 type Table struct {
-	Relname string // unquoted
-	Sql     string // CREATE TABLE statement
-	Nparts  int
-	Partmap []int // part num -> repgroup id mapping
+	Relname      string // unquoted
+	Sql          string // CREATE TABLE statement
+	Nparts       int
+	Partmap      []int  // part num -> repgroup id mapping
+	ColocateWith string // bind this table parts distribution to some other table
 }
 
 // Master connection info

@@ -135,18 +135,18 @@ func broadcastConnMain(in <-chan interface{}, resch chan<- Res, reportch chan<- 
 			if report.err == nil {
 				rows, err := conn.Query(sql)
 				if err != nil {
-					report.err = fmt.Errorf("sql %v failed: %v", sql, err)
+					report.err = fmt.Errorf("sql \n%v\n failed: %v", sql, err)
 				}
 
 				// TODO Assume queries return single text attr or nothing
 				for rows.Next() {
 					err = rows.Scan(&res)
 					if err != nil {
-						report.err = fmt.Errorf("scan sql %v failed: %v", sql, err)
+						report.err = fmt.Errorf("scan sql \n%v\n failed: %v", sql, err)
 					}
 				}
 				if rows.Err() != nil {
-					report.err = fmt.Errorf("sql %v failed: %v", sql, rows.Err())
+					report.err = fmt.Errorf("sql \n%v\n failed: %v", sql, rows.Err())
 				}
 				rows.Close()
 			}
@@ -299,16 +299,16 @@ func ConnString(p map[string]string) string {
 // postgres_fdw accepts user/password params in user mapping opts and
 // everything else in foreign server ones...
 func FormUserMappingOpts(p map[string]string) string {
-	res := fmt.Sprintf("options (user %s", LI(p["user"]))
+	res := fmt.Sprintf("options (user %s", QL(p["user"]))
 	if password, ok := p["password"]; ok {
-		res = fmt.Sprintf("%s, password %s", res, LI(password))
+		res = fmt.Sprintf("%s, password %s", res, QL(password))
 	}
 	return fmt.Sprintf("%s)", res)
 }
 func FormForeignServerOpts(p map[string]string) string {
 	res := fmt.Sprintf("options (dbname %s, host %s, port '%s')",
-		LI(p["dbname"]),
-		LI(p["host"]),
+		QL(p["dbname"]),
+		QL(p["host"]),
 		p["port"])
 	return res
 }
@@ -330,7 +330,7 @@ func QI(ident string) string {
 }
 
 // PG's quote literal
-func LI(lit string) string {
+func QL(lit string) string {
 	var sql_str_escaper = strings.NewReplacer(`'`, `''`)
 	return fmt.Sprintf("'%s'", sql_str_escaper.Replace(lit))
 }

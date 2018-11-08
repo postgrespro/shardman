@@ -148,13 +148,13 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	for _, table := range tables {
 		bcst.Push(newrgid, table.Sql)
 		for pnum := 0; pnum < table.Nparts; pnum++ {
-			bcst.Push(newrgid, fmt.Sprintf("create foreign table %s partition of %s for values with (modulus %d, remainder %d) server %s options (table_name %s)",
-				pg.QI(table.Relname+"_"+string(pnum)+"_fdw"),
+			bcst.Push(newrgid, fmt.Sprintf("create foreign table %s partition of %s for values with (modulus %d, remainder %d) server hp_rg_%d options (table_name %s)",
+				pg.QI(fmt.Sprintf("%s_%d_fdw", table.Relname, pnum)),
 				pg.QI(table.Relname),
 				table.Nparts,
 				pnum,
-				"hp_rg_"+string(table.Partmap[pnum]),
-				pg.QI(table.Relname+"_"+string(pnum))))
+				table.Partmap[pnum],
+				pg.QL(fmt.Sprintf("%s_%d", table.Relname, pnum))))
 		}
 	}
 	_, err = bcst.Commit(true)

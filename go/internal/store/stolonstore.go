@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"crypto/tls"
@@ -105,7 +106,7 @@ type ClusterSpec struct {
 // Okay, let's try to avoid touching internals this time
 func StolonUpdate(rg *cluster.RepGroup, rgid int, patch bool, spec *cluster.StolonSpec) error {
 	// Add repgroup-specific stuff
-	spec.PGParameters["hodgepodge.node_id"] = string(rgid)
+	spec.PGParameters["hodgepodge.node_id"] = strconv.Itoa(rgid)
 
 	specj, err := json.Marshal(spec)
 	if err != nil {
