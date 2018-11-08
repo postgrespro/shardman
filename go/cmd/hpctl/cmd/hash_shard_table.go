@@ -10,7 +10,7 @@ import (
 	"postgrespro.ru/hodgepodge/internal/store"
 )
 
-// we will store args directly in RepGroup struct
+// we will store args directly in Table struct
 var newtable cluster.Table
 
 var hsCmd = &cobra.Command{
@@ -24,7 +24,7 @@ var hsCmd = &cobra.Command{
 		if newtable.Relname == "" {
 			die("relname is required")
 		}
-		if newtable.Relname == "" {
+		if newtable.Sql == "" {
 			die("sql is required")
 		}
 		if newtable.Nparts == 0 && newtable.ColocateWith == "" {
