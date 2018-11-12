@@ -25,7 +25,7 @@ func CheckConfig(cfg *cmdcommon.CommonConfig) error {
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "hpctl",
-	Short: "hodgepodge command line client",
+	Short: "hodgepodge command line client. Note: you must always run at most one instance of hpctl at time.",
 	// bare command does nothing
 }
 

@@ -68,6 +68,13 @@ func hashShardTable(cmd *cobra.Command, args []string) {
 			die("Table %s is already sharded", newtable.Relname)
 		}
 		if newtable.ColocateWith == table.Relname {
+			// if we are asked to colocate with already colocated table,
+			// set its reference to avoid nested hierarchies
+			if table.ColocateWith != "" {
+				newtable.ColocateWith = table.ColocateWith
+			}
+			// We can use this reference though since partmap must
+			// be the same
 			colocated_table = &table
 			newtable.Nparts = table.Nparts
 		}
@@ -105,6 +112,7 @@ func hashShardTable(cmd *cobra.Command, args []string) {
 	// create partitions
 	var target_rgid int
 	var target_rgid_idx int = -1
+	newtable.Partmap = make([]int, newtable.Nparts)
 	for pnum := 0; pnum < newtable.Nparts; pnum++ {
 		// choose by plain round-robing, if not colocated
 		if newtable.ColocateWith == "" {
@@ -113,6 +121,7 @@ func hashShardTable(cmd *cobra.Command, args []string) {
 		} else {
 			target_rgid = colocated_table.Partmap[pnum]
 		}
+		newtable.Partmap[pnum] = target_rgid
 		for rgid, _ := range rgs {
 			if rgid == target_rgid { // holder
 				bcst.Push(rgid, fmt.Sprintf("create table %s partition of %s for values with (modulus %d, remainder %d)",

@@ -88,6 +88,8 @@ func initCluster(cmd *cobra.Command, args []string) {
 			"log_line_prefix":           "%m [%r][%p]",
 			"log_min_messages":          "INFO",
 			"max_prepared_transactions": "100",
+			"hot_standby":               "off", // disable connections to replicas
+			"wal_level":                 "logical",
 		},
 		AutomaticPgRestart: &autopgrestart,
 	}

@@ -17,8 +17,8 @@ import (
 
 type Broadcaster struct {
 	conns    map[int]*BroadcastConn
-	resch    chan Res
-	reportch chan Report
+	resch    chan resT
+	reportch chan report
 }
 
 type BroadcastConn struct {
@@ -26,12 +26,12 @@ type BroadcastConn struct {
 	connstr string
 }
 
-type Report struct {
+type report struct {
 	err error // nil ~ ok
 	id  int
 }
 
-type Res struct {
+type resT struct {
 	res string
 	id  int
 }
@@ -48,8 +48,8 @@ type RollbackPrepared struct {
 	gid string
 }
 
-func broadcastConnMain(in <-chan interface{}, resch chan<- Res, reportch chan<- Report, connstr string, myid int) {
-	var report = Report{err: nil, id: myid}
+func broadcastConnMain(in <-chan interface{}, resch chan<- resT, reportch chan<- report, connstr string, myid int) {
+	var report = report{err: nil, id: myid}
 	var res *string = nil
 	var tx *pgx.Tx = nil
 	var prepare_exists = false
@@ -83,7 +83,7 @@ func broadcastConnMain(in <-chan interface{}, resch chan<- Res, reportch chan<- 
 				}
 			}
 			if report.err == nil && res != nil {
-				resch <- Res{res: *res, id: myid}
+				resch <- resT{res: *res, id: myid}
 			}
 			reportch <- report
 			report.err = nil
@@ -96,7 +96,7 @@ func broadcastConnMain(in <-chan interface{}, resch chan<- Res, reportch chan<- 
 				prepare_exists = true
 			}
 			if report.err == nil && res != nil {
-				resch <- Res{res: *res, id: myid}
+				resch <- resT{res: *res, id: myid}
 			}
 			reportch <- report
 			report.err = nil
@@ -169,8 +169,8 @@ func NewBroadcaster(rgs map[int]*cluster.RepGroup, cldata *cluster.ClusterData) 
 		}
 	}
 
-	bcst.resch = make(chan Res)
-	bcst.reportch = make(chan Report)
+	bcst.resch = make(chan resT)
+	bcst.reportch = make(chan report)
 
 	for id, bconn := range bcst.conns {
 		go broadcastConnMain(bconn.in, bcst.resch, bcst.reportch, bconn.connstr, id)
@@ -269,6 +269,19 @@ func (bcst *Broadcaster) Close() {
 }
 
 // Connstring stuff
+
+// get connstr of each repgroup
+func GetSuConnstrs(rgs map[int]*cluster.RepGroup, cldata *cluster.ClusterData) (map[int]string, error) {
+	var connstrs = make(map[int]string)
+	for rgid, rg := range rgs {
+		connstr, err := GetSuConnstr(rg, cldata)
+		if err != nil {
+			return nil, err
+		}
+		connstrs[rgid] = connstr
+	}
+	return connstrs, nil
+}
 
 func GetSuConnstr(rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, error) {
 	cp, err := store.GetSuConnstrMap(context.TODO(), rg, cldata)

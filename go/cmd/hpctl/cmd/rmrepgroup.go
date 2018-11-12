@@ -70,7 +70,7 @@ func rmRepGroup(cmd *cobra.Command, args []string) {
 	for _, table := range tables {
 		for pnum := 0; pnum < table.Nparts; pnum++ {
 			if table.Partmap[pnum] == rmrgid {
-				die("Cluster to be removed holds partition %d of table %s",
+				die("Repgroup to be removed holds partition %d of table %s",
 					pnum, table.Relname)
 			}
 		}

@@ -6,9 +6,15 @@ source "${script_dir}/common.sh"
 hpctl init --cluster-name haha --store-endpoints localhost:2379 --pg-su-auth-method trust
 hpctl addrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_1
 hpctl addrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_2
+hpctl addrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_3
 hpctl hash-shard-table --cluster-name haha --relname pt --sql "create table pt(id serial, payload real) partition by hash(id);" --numparts 10
 # don't forget to disable creating indexes of fdw tables
 # hpctl hash-shard-table --cluster-name haha --relname pt --sql "create table pti(id serial primary key, payload real) partition by hash(id);" --numparts 10
 
+hpctl rebalance --cluster-name haha -p 10
+
+hpctl drop-table --cluster-name haha --relname pt
+
 hpctl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_1
 hpctl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_2
+hpctl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_3

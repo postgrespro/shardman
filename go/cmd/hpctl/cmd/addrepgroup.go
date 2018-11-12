@@ -146,6 +146,8 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		die("Failed to get tables from store: %v", err)
 	}
 	for _, table := range tables {
+		bcst.Push(newrgid, fmt.Sprintf("drop table if exists %s cascade",
+			pg.QI(table.Relname)))
 		bcst.Push(newrgid, table.Sql)
 		for pnum := 0; pnum < table.Nparts; pnum++ {
 			bcst.Push(newrgid, fmt.Sprintf("create foreign table %s partition of %s for values with (modulus %d, remainder %d) server hp_rg_%d options (table_name %s)",
