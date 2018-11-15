@@ -37,7 +37,7 @@ func init() {
 	rebCmd.Flags().IntVarP(&parallelism, "parallelism", "p", 10, "How many partitions to move simultaneously. Moving partitions one-by-one (1) minimizes overhead on cluster operation; -1 means maximum parallelism, all parts are moved at the same time.")
 }
 
-type moveTask struct {
+type MoveTask struct {
 	src_rgid    int
 	src_connstr string
 	dst_rgid    int
@@ -70,8 +70,8 @@ func rebalance(cmd *cobra.Command, args []string) {
 }
 
 // form slice of tasks giving even rebalance
-func even_rebalance(tables []cluster.Table, rgs map[int]*cluster.RepGroup) []moveTask {
-	var tasks = make([]moveTask, 0)
+func even_rebalance(tables []cluster.Table, rgs map[int]*cluster.RepGroup) []MoveTask {
+	var tasks = make([]MoveTask, 0)
 	for _, table := range tables {
 		if table.ColocateWith != "" {
 			continue // colocated tables follow their references
@@ -109,7 +109,7 @@ func even_rebalance(tables []cluster.Table, rgs map[int]*cluster.RepGroup) []mov
 			// move part
 			leanest_parts, fattest_parts := parts_per_rg[leanest_rgid], parts_per_rg[fattest_rgid]
 			moved_part := fattest_parts[len(fattest_parts)-1]
-			tasks = append(tasks, moveTask{
+			tasks = append(tasks, MoveTask{
 				src_rgid:   fattest_rgid,
 				dst_rgid:   leanest_rgid,
 				table_name: table.Relname,
@@ -122,7 +122,7 @@ func even_rebalance(tables []cluster.Table, rgs map[int]*cluster.RepGroup) []mov
 			// move part of colocated tables
 			for _, ctable := range tables {
 				if ctable.ColocateWith == table.Relname {
-					tasks = append(tasks, moveTask{
+					tasks = append(tasks, MoveTask{
 						src_rgid:   fattest_rgid,
 						dst_rgid:   leanest_rgid,
 						table_name: ctable.Relname,
@@ -143,12 +143,12 @@ func min(x, y int) int {
 }
 
 type movePartWorkerChans struct {
-	in     chan moveTask
+	in     chan MoveTask
 	commit chan bool
 }
 
 type commitRequest struct {
-	task moveTask
+	task MoveTask
 	id   int
 }
 
@@ -167,7 +167,7 @@ const (
 	movePartWorkerWaitCommit
 )
 
-func rwlog(id int, task moveTask, format string, a ...interface{}) {
+func rwlog(id int, task MoveTask, format string, a ...interface{}) {
 	args := []interface{}{id, task.pnum, task.table_name, task.src_rgid, task.dst_rgid}
 	args = append(args, a...)
 	log.Printf("Worker %d, moving part %d of table %s from %d to %d: "+format, args...)
@@ -176,7 +176,7 @@ func rwlog(id int, task moveTask, format string, a ...interface{}) {
 // Attempt to clean up after ourselves, assuming task didn't commit. We try to
 // leave everything clean and consistent at least if rebalance was stopped by
 // signal and all pgs were healthy.
-func rwcleanup(src_conn **pgx.Conn, dst_conn **pgx.Conn, task *moveTask, state int, id int) {
+func rwcleanup(src_conn **pgx.Conn, dst_conn **pgx.Conn, task *MoveTask, state int, id int) {
 	var err error
 	log.Printf("state is %v", state)
 	if state < movePartWorkerConnsEstablished {
@@ -223,11 +223,11 @@ CLOSE_CONNS:
 // when shutdown chan is closed, we must exit asap
 // when part is moved, we ask main goroutine to commit the change through out
 // chan; he responds to us via commit chan -- true if successfully put.
-func movePartWorkerMain(in <-chan moveTask, commit <-chan bool, shutdown chan struct{}, out chan<- interface{}, myid int) {
+func movePartWorkerMain(in <-chan MoveTask, commit <-chan bool, shutdown chan struct{}, out chan<- interface{}, myid int) {
 	var state = movePartWorkerIdle
 	var src_conn *pgx.Conn = nil
 	var dst_conn *pgx.Conn = nil
-	var task moveTask
+	var task MoveTask
 	var ok bool
 	var sync_lsn string
 
@@ -439,7 +439,7 @@ func movePartWorkerMain(in <-chan moveTask, commit <-chan bool, shutdown chan st
 
 // Separate func to be able to call from other cmds. Returns true if everything
 // is ok.
-func Rebalance(cs store.ClusterStore, p int, tasks []moveTask) bool {
+func Rebalance(cs store.ClusterStore, p int, tasks []MoveTask) bool {
 	cldata, _, err := cs.GetClusterData(context.TODO())
 	if err != nil {
 		die("cannot get cluster data: %v", err)
@@ -470,7 +470,7 @@ func Rebalance(cs store.ClusterStore, p int, tasks []moveTask) bool {
 	var active_workers = nworkers
 	for i := 0; i < nworkers; i++ {
 		chans[i] = new(movePartWorkerChans)
-		chans[i].in = make(chan moveTask)
+		chans[i].in = make(chan MoveTask)
 		chans[i].commit = make(chan bool)
 		go movePartWorkerMain(chans[i].in, chans[i].commit, shutdownch, reportch, i)
 		chans[i].in <- tasks[len(tasks)-1] // push first task

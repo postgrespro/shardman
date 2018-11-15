@@ -18,3 +18,6 @@ hpctl drop-table --cluster-name haha --relname pt
 hpctl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_1
 hpctl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_2
 hpctl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_3
+
+
+hpmon --cluster-name haha

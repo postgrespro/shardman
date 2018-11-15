@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cmdcommon "postgrespro.ru/hodgepodge/cmd"
+	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/pg"
 )
 
@@ -62,13 +63,15 @@ func rmRepGroup(cmd *cobra.Command, args []string) {
 	if err != nil {
 		die("Failed to get tables from the store: %v", err)
 	}
-	for _, table := range tables {
-		for pnum := 0; pnum < table.Nparts; pnum++ {
-			if table.Partmap[pnum] == rmrgid {
-				die("Repgroup to be removed holds partition %d of table %s",
-					pnum, table.Relname)
-			}
-		}
+	if len(tables) != 0 && len(rgs) <= 1 {
+		die("Can't the last replication group with existing sharded tables")
+	}
+	var movetasks = free_rg_tasks(rmrgid, tables, rgs)
+	if len(movetasks) != 0 {
+		stderr("Replication group being removed holds partitions; moving them")
+	}
+	if !Rebalance(cs, 1, movetasks) {
+		die("Failed to move tasks from removed repgroup")
 	}
 
 	delete(rgs, rmrgid) // rmrg might be unaccessible, don't touch it
@@ -93,4 +96,47 @@ func rmRepGroup(cmd *cobra.Command, args []string) {
 	if err != nil {
 		die("bcst failed: %v", err)
 	}
+}
+
+// build tasks to move all partitions from given repgroup
+func free_rg_tasks(frgid int, tables []cluster.Table, rgs map[int]*cluster.RepGroup) []MoveTask {
+	var tasks = make([]MoveTask, 0)
+	var rgids = make([]int, len(rgs)-1)
+	var i = 0
+	for rgid, _ := range rgs {
+		if rgid == frgid {
+			continue
+		}
+		rgids[i] = rgid
+		i++
+	}
+	var dst_rg_idx = 0
+	for _, table := range tables {
+		if table.ColocateWith != "" {
+			continue // colocated tables follow their references
+		}
+		for pnum := 0; pnum < table.Nparts; pnum++ {
+			if frgid == table.Partmap[pnum] {
+				tasks = append(tasks, MoveTask{
+					src_rgid:   frgid,
+					dst_rgid:   rgids[dst_rg_idx],
+					table_name: table.Relname,
+					pnum:       pnum,
+				})
+			}
+			for _, ctable := range tables {
+				if ctable.ColocateWith == table.Relname {
+					tasks = append(tasks, MoveTask{
+						src_rgid:   ctable.Partmap[pnum],
+						dst_rgid:   rgids[dst_rg_idx],
+						table_name: ctable.Relname,
+						pnum:       pnum,
+					})
+				}
+			}
+
+		}
+		dst_rg_idx = (dst_rg_idx + 1) % len(rgids)
+	}
+	return tasks
 }

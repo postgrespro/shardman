@@ -176,6 +176,7 @@ func monWorkerMain(ctx context.Context, rgid int, in chan ClusterState) {
 		retryTimer: time.NewTimer(0),
 	}
 	w.retryTimer.Stop()
+	w.log("Starting")
 
 	for {
 		select {
