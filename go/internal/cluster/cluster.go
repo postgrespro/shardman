@@ -1,3 +1,5 @@
+// Copyright (c) 2018, Postgres Professional
+
 package cluster
 
 import (
@@ -48,6 +50,7 @@ type Master struct {
 }
 
 // From Stolon
+// Copyright 2015 Sorint.lab under Apache License, Version 2.0 
 // Duration is needed to be able to marshal/unmarshal json strings with time
 // unit (eg. 3s, 100ms) instead of ugly times in nanoseconds.
 type Duration struct {

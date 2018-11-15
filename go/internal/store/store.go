@@ -1,3 +1,5 @@
+// Copyright (c) 2018, Postgres Professional
+
 // Stuff for retrieving metadata
 package store
 

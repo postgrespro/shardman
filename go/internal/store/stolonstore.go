@@ -1,3 +1,5 @@
+// Copyright (c) 2018, Postgres Professional
+
 // Some functions to work with Stolon data. Yeah, peeking private data is not
 // nice, but Stolon doesn't expose any API (no way to include internal packages)
 // and exec'ing stolonctl is not nice either
@@ -53,7 +55,8 @@ func NewStolonStore(rg *cluster.RepGroup) (*StolonStore, error) {
 	return &StolonStore{storePath: storePath, store: etcdstore}, nil
 }
 
-// Copy needed fragments from Stolon...
+// Copy needed fragments from Stolon... 
+// Copyright 2015 Sorint.lab under Apache License, Version 2.0 
 type ClusterData struct {
 	DBs   map[string]*DB `json:"dbs"`
 	Proxy *Proxy         `json:"proxy"`

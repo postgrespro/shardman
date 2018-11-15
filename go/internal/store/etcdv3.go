@@ -1,3 +1,5 @@
+// Copyright (c) 2018, Postgres Professional
+
 // Small wrapper around etcdv3 API: makes it a bit simpler and enforces requests
 // timout. Mostly from Stolon.
 package store

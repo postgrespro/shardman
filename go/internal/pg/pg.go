@@ -1,3 +1,5 @@
+// Copyright (c) 2018, Postgres Professional
+
 // Interaction with Postgres. Partly from Stolon based on github.com/lib/pq, ha
 package pg
 
