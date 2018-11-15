@@ -5,8 +5,9 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/pg"
-	"postgrespro.ru/hodgepodge/internal/store"
 )
 
 // for args
@@ -18,9 +19,6 @@ var faCmd = &cobra.Command{
 	Run:   forall,
 	Short: "Execute piece of SQL on all replication groups",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
-		if err := CheckConfig(&cfg); err != nil {
-			die(err.Error())
-		}
 		if sql == "" {
 			die("sql is required")
 		}
@@ -35,7 +33,7 @@ func init() {
 }
 
 func forall(cmd *cobra.Command, args []string) {
-	cs, err := store.NewClusterStore(&cfg)
+	cs, err := cmdcommon.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}

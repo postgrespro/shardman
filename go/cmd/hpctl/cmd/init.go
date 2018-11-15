@@ -5,8 +5,9 @@ import (
 	"os/user"
 
 	"github.com/spf13/cobra"
+
+	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/store"
 )
 
 // init-specific options
@@ -23,9 +24,6 @@ var initCmd = &cobra.Command{
 	Run:   initCluster,
 	Short: "Initialize a new cluster",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
-		if err := CheckConfig(&cfg); err != nil {
-			die(err.Error())
-		}
 		if initcfg.pgSuAuthMethod != "trust" && initcfg.pgSuPassword == "" {
 			die("Password not provided and authmethod is not trust")
 		}
@@ -50,8 +48,7 @@ func init() {
 }
 
 func initCluster(cmd *cobra.Command, args []string) {
-	// fmt.Printf("initting cluster %s\n", cfg.ClusterName)
-	cs, err := store.NewClusterStore(&cfg)
+	cs, err := cmdcommon.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}
@@ -69,10 +66,6 @@ func initCluster(cmd *cobra.Command, args []string) {
 	if err != nil {
 		die("failed to save tables data in store")
 	}
-	err = cs.PutMasters(context.TODO(), map[int]*cluster.Master{})
-	if err != nil {
-		die("failed to save masters data in store")
-	}
 	err = cs.PutRepGroups(context.TODO(), map[int]*cluster.RepGroup{})
 	if err != nil {
 		die("failed to save repgroup data in store")
@@ -88,8 +81,9 @@ func initCluster(cmd *cobra.Command, args []string) {
 			"log_line_prefix":           "%m [%r][%p]",
 			"log_min_messages":          "INFO",
 			"max_prepared_transactions": "100",
-			"hot_standby":               "off", // disable connections to replicas
-			"wal_level":                 "logical",
+			// FIXME: stolon forces hot_standby, apparently for its own conns
+			"hot_standby": "off", // disable connections to replicas
+			"wal_level":   "logical",
 		},
 		AutomaticPgRestart: &autopgrestart,
 	}

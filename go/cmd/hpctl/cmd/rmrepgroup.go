@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/pg"
-	"postgrespro.ru/hodgepodge/internal/store"
 )
 
 // keep arg here
@@ -17,12 +17,7 @@ var rmrgCmd = &cobra.Command{
 	Use:   "rmrepgroup",
 	Run:   rmRepGroup,
 	Short: "Remove replication group from the cluster.",
-	Long:  "Remove replication group from the cluster. You should rarely need this command. Replication group must not hold any partitions",
-	PersistentPreRun: func(c *cobra.Command, args []string) {
-		if err := CheckConfig(&cfg); err != nil {
-			die(err.Error())
-		}
-	},
+	Long:  "Remove replication group from the cluster. You should rarely need this command. If replication group holds any partitions, they will be moved to other repgroups",
 }
 
 func init() {
@@ -33,7 +28,7 @@ func init() {
 }
 
 func rmRepGroup(cmd *cobra.Command, args []string) {
-	cs, err := store.NewClusterStore(&cfg)
+	cs, err := cmdcommon.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}

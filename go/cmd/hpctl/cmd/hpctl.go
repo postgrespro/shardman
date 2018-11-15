@@ -7,25 +7,20 @@ import (
 
 	"github.com/spf13/cobra"
 	cmdcommon "postgrespro.ru/hodgepodge/cmd"
-	"postgrespro.ru/hodgepodge/internal/store"
 )
 
 // Here we will store args
 var cfg cmdcommon.CommonConfig
 
-// check options
-func CheckConfig(cfg *cmdcommon.CommonConfig) error {
-	if cfg.ClusterName == "" {
-		return fmt.Errorf("cluster name required")
-	}
-
-	return nil
-}
-
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "hpctl",
 	Short: "hodgepodge command line client. Note: you must always run at most one instance of hpctl at time.",
+	PersistentPreRun: func(c *cobra.Command, args []string) {
+		if err := cmdcommon.CheckConfig(&cfg); err != nil {
+			die(err.Error())
+		}
+	},
 	// bare command does nothing
 }
 
@@ -50,9 +45,7 @@ var cmdVersion = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(cmdVersion)
 
-	rootCmd.PersistentFlags().StringVar(&cfg.StoreEndpoints, "store-endpoints",
-		store.DefaultEtcdEndpoints[0], "a comma-delimited list of store endpoints (use https scheme for tls communication)")
-	rootCmd.PersistentFlags().StringVar(&cfg.ClusterName, "cluster-name", "", "cluster name")
+	cmdcommon.AddCommonFlags(rootCmd, &cfg)
 }
 
 // Copied from Stolon, apparently Go doesn't have this in lib

@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx"
 	"github.com/spf13/cobra"
 
+	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/pg"
 	"postgrespro.ru/hodgepodge/internal/store"
@@ -19,11 +20,6 @@ var addrgCmd = &cobra.Command{
 	Use:   "addrepgroup",
 	Run:   addRepGroup,
 	Short: "Add replication group to the cluster",
-	PersistentPreRun: func(c *cobra.Command, args []string) {
-		if err := CheckConfig(&cfg); err != nil {
-			die(err.Error())
-		}
-	},
 }
 
 func init() {
@@ -47,7 +43,7 @@ func init() {
 }
 
 func addRepGroup(cmd *cobra.Command, args []string) {
-	cs, err := store.NewClusterStore(&cfg)
+	cs, err := cmdcommon.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}
@@ -61,7 +57,7 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		die("cluster %v not found", cfg.ClusterName)
 	}
 
-	connstr, err := pg.GetSuConnstr(&newrg, cldata)
+	connstr, err := pg.GetSuConnstr(context.TODO(), &newrg, cldata)
 	if err != nil {
 		die("Couldn't get connstr: %v", err)
 	}
@@ -116,8 +112,8 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	bcst.Begin()
 	// create foreign servers to all rgs at newrg and vice versa
 	newrgconnstrmap, err := store.GetSuConnstrMap(context.TODO(), &newrg, cldata)
-	newrgumopts := pg.FormUserMappingOpts(newrgconnstrmap)
-	newrgfsopts := pg.FormForeignServerOpts(newrgconnstrmap)
+	newrgumopts, _ := pg.FormUserMappingOpts(newrgconnstrmap)
+	newrgfsopts, _ := pg.FormForeignServerOpts(newrgconnstrmap)
 	if err != nil {
 		die("Failed to get new rg connstr")
 	}
@@ -129,8 +125,8 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		if err != nil {
 			die("Failed to get rg %s connstr", rg.StolonName)
 		}
-		rgumopts := pg.FormUserMappingOpts(rgconnstrmap)
-		rgfsopts := pg.FormForeignServerOpts(rgconnstrmap)
+		rgumopts, _ := pg.FormUserMappingOpts(rgconnstrmap)
+		rgfsopts, _ := pg.FormForeignServerOpts(rgconnstrmap)
 		bcst.Push(newrgid, fmt.Sprintf("drop server if exists hp_rg_%d cascade", rgid))
 		bcst.Push(newrgid, fmt.Sprintf("create server hp_rg_%d foreign data wrapper postgres_fdw %s", rgid, rgfsopts))
 		bcst.Push(rgid, fmt.Sprintf("drop server if exists hp_rg_%d cascade", newrgid))

@@ -5,9 +5,10 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/pg"
-	"postgrespro.ru/hodgepodge/internal/store"
 )
 
 // we will store args directly in Table struct
@@ -18,9 +19,6 @@ var hsCmd = &cobra.Command{
 	Run:   hashShardTable,
 	Short: "Hash shard table.",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
-		if err := CheckConfig(&cfg); err != nil {
-			die(err.Error())
-		}
 		if newtable.Relname == "" {
 			die("relname is required")
 		}
@@ -44,7 +42,7 @@ func init() {
 }
 
 func hashShardTable(cmd *cobra.Command, args []string) {
-	cs, err := store.NewClusterStore(&cfg)
+	cs, err := cmdcommon.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}

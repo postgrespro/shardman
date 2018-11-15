@@ -5,9 +5,10 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/pg"
-	"postgrespro.ru/hodgepodge/internal/store"
 )
 
 var dtrelname string
@@ -17,9 +18,6 @@ var dtCmd = &cobra.Command{
 	Run:   dropTable,
 	Short: "Drop sharded table",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
-		if err := CheckConfig(&cfg); err != nil {
-			die(err.Error())
-		}
 		if dtrelname == "" {
 			die("relname is required")
 		}
@@ -33,7 +31,7 @@ func init() {
 }
 
 func dropTable(cmd *cobra.Command, args []string) {
-	cs, err := store.NewClusterStore(&cfg)
+	cs, err := cmdcommon.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}

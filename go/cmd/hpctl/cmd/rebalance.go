@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx"
 	"github.com/spf13/cobra"
 
+	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/pg"
 	"postgrespro.ru/hodgepodge/internal/store"
@@ -24,9 +25,6 @@ var rebCmd = &cobra.Command{
 	Run:   rebalance,
 	Short: "Rebalance the data: moves partitions between replication groups until they are evenly distributed. Based on logical replication and performed mostly seamlessly in background; each partition will be only shortly locked in the end to finally sync the data.",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
-		if err := CheckConfig(&cfg); err != nil {
-			die(err.Error())
-		}
 		if parallelism == 0 || parallelism < -1 {
 			die("Wrong parallelism")
 		}
@@ -49,7 +47,26 @@ type moveTask struct {
 }
 
 func rebalance(cmd *cobra.Command, args []string) {
-	Rebalance(parallelism)
+	cs, err := cmdcommon.NewClusterStore(&cfg)
+	if err != nil {
+		die("failed to create store: %v", err)
+	}
+	defer cs.Close()
+
+	tables, _, err := cs.GetTables(context.TODO())
+	if err != nil {
+		die("Failed to get tables from the store: %v", err)
+	}
+
+	rgs, _, err := cs.GetRepGroups(context.TODO())
+	if err != nil {
+		die("Failed to get repgroups: %v", err)
+	}
+
+	var tasks = even_rebalance(tables, rgs)
+	if !Rebalance(cs, parallelism, tasks) {
+		die("Something failed, examine the logs")
+	}
 }
 
 // form slice of tasks giving even rebalance
@@ -193,10 +210,14 @@ func rwcleanup(src_conn **pgx.Conn, dst_conn **pgx.Conn, task *moveTask, state i
 	}
 
 CLOSE_CONNS:
-	(*src_conn).Close()
-	*src_conn = nil
-	(*dst_conn).Close()
-	*dst_conn = nil
+	// It is safe to close conn multiple times, so it is not neccessary to
+	// nullify it, but it is *not* safe to close nil conn, strangely.
+	if *src_conn != nil {
+		(*src_conn).Close()
+	}
+	if *dst_conn != nil {
+		(*dst_conn).Close()
+	}
 }
 
 // when shutdown chan is closed, we must exit asap
@@ -262,7 +283,6 @@ func movePartWorkerMain(in <-chan moveTask, commit <-chan bool, shutdown chan st
 				rwlog(myid, task, "sub creation failed: %v", err)
 				goto ERR
 			}
-			rwlog(myid, task, "going to movePartWorkerWaitInitCopy")
 			state = movePartWorkerWaitInitCopy
 			continue
 
@@ -307,7 +327,6 @@ func movePartWorkerMain(in <-chan moveTask, commit <-chan bool, shutdown chan st
 					goto ERRTMT
 				}
 				if synced {
-					rwlog(myid, task, "going to movePartWorkerWaitInitialCatchup")
 					state = movePartWorkerWaitInitialCatchup
 				}
 				continue
@@ -420,13 +439,7 @@ func movePartWorkerMain(in <-chan moveTask, commit <-chan bool, shutdown chan st
 
 // Separate func to be able to call from other cmds. Returns true if everything
 // is ok.
-func Rebalance(p int) bool {
-	cs, err := store.NewClusterStore(&cfg)
-	if err != nil {
-		die("failed to create store: %v", err)
-	}
-	defer cs.Close()
-
+func Rebalance(cs store.ClusterStore, p int, tasks []moveTask) bool {
 	cldata, _, err := cs.GetClusterData(context.TODO())
 	if err != nil {
 		die("cannot get cluster data: %v", err)
@@ -435,19 +448,16 @@ func Rebalance(p int) bool {
 		die("cluster %v not found", cfg.ClusterName)
 	}
 
-	tables, _, err := cs.GetTables(context.TODO())
-	if err != nil {
-		die("Failed to get tables from the store: %v", err)
-	}
-
 	rgs, _, err := cs.GetRepGroups(context.TODO())
 	if err != nil {
 		die("Failed to get repgroups: %v", err)
 	}
 
-	var tasks = even_rebalance(tables, rgs)
 	// fill connstrs
-	connstrs, err := pg.GetSuConnstrs(rgs, cldata)
+	connstrs, err := pg.GetSuConnstrs(context.TODO(), rgs, cldata)
+	if err != nil {
+		die("Failed to get connstrs: %v", err)
+	}
 	for i, task := range tasks {
 		tasks[i].src_connstr = connstrs[task.src_rgid]
 		tasks[i].dst_connstr = connstrs[task.dst_rgid]

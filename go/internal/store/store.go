@@ -11,7 +11,6 @@ import (
 	etcdclientv3 "go.etcd.io/etcd/clientv3"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 
-	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 )
 
@@ -23,7 +22,13 @@ type KVPair struct {
 }
 
 type ClusterStore interface {
+	GetClusterData(ctx context.Context) (*cluster.ClusterData, *KVPair, error)
+	PutClusterData(ctx context.Context, cldata *cluster.ClusterData) error
 	GetRepGroups(ctx context.Context) (map[int]*cluster.RepGroup, *KVPair, error)
+	PutRepGroups(ctx context.Context, rgs map[int]*cluster.RepGroup) error
+	GetTables(ctx context.Context) ([]cluster.Table, *KVPair, error)
+	PutTables(ctx context.Context, tables []cluster.Table) error
+	Close() error
 }
 
 type clusterStoreImpl struct {
@@ -31,17 +36,17 @@ type clusterStoreImpl struct {
 	store     EtcdV3Store
 }
 
-func NewClusterStore(cfg *cmdcommon.CommonConfig) (*clusterStoreImpl, error) {
-	endpoints := strings.Split(cfg.StoreEndpoints, ",")
+func NewClusterStore(endpoints string, cluster_name string) (*clusterStoreImpl, error) {
+	endpointss := strings.Split(endpoints, ",")
 	cli, err := etcdclientv3.New(etcdclientv3.Config{
-		Endpoints: endpoints,
+		Endpoints: endpointss,
 		TLS:       nil,
 	})
 	if err != nil {
 		return nil, err
 	}
 	etcdstore := EtcdV3Store{c: cli}
-	storePath := filepath.Join("hodgepodge", cfg.ClusterName)
+	storePath := filepath.Join("hodgepodge", cluster_name)
 	return &clusterStoreImpl{storePath: storePath, store: etcdstore}, nil
 }
 

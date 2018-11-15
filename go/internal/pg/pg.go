@@ -159,7 +159,7 @@ func NewBroadcaster(rgs map[int]*cluster.RepGroup, cldata *cluster.ClusterData) 
 
 	// learn connstrs
 	for rgid, rg := range rgs {
-		connstr, err := GetSuConnstr(rg, cldata)
+		connstr, err := GetSuConnstr(context.TODO(), rg, cldata)
 		if err != nil {
 			return nil, err
 		}
@@ -271,10 +271,10 @@ func (bcst *Broadcaster) Close() {
 // Connstring stuff
 
 // get connstr of each repgroup
-func GetSuConnstrs(rgs map[int]*cluster.RepGroup, cldata *cluster.ClusterData) (map[int]string, error) {
+func GetSuConnstrs(ctx context.Context, rgs map[int]*cluster.RepGroup, cldata *cluster.ClusterData) (map[int]string, error) {
 	var connstrs = make(map[int]string)
 	for rgid, rg := range rgs {
-		connstr, err := GetSuConnstr(rg, cldata)
+		connstr, err := GetSuConnstr(ctx, rg, cldata)
 		if err != nil {
 			return nil, err
 		}
@@ -283,8 +283,8 @@ func GetSuConnstrs(rgs map[int]*cluster.RepGroup, cldata *cluster.ClusterData) (
 	return connstrs, nil
 }
 
-func GetSuConnstr(rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, error) {
-	cp, err := store.GetSuConnstrMap(context.TODO(), rg, cldata)
+func GetSuConnstr(ctx context.Context, rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, error) {
+	cp, err := store.GetSuConnstrMap(ctx, rg, cldata)
 	if err != nil {
 		return "", err
 	}
@@ -311,19 +311,32 @@ func ConnString(p map[string]string) string {
 
 // postgres_fdw accepts user/password params in user mapping opts and
 // everything else in foreign server ones...
-func FormUserMappingOpts(p map[string]string) string {
+func FormUserMappingOpts(p map[string]string) (string, error) {
+	if _, ok := p["user"]; !ok {
+		return "", fmt.Errorf("username not specified")
+	}
 	res := fmt.Sprintf("options (user %s", QL(p["user"]))
 	if password, ok := p["password"]; ok {
 		res = fmt.Sprintf("%s, password %s", res, QL(password))
 	}
-	return fmt.Sprintf("%s)", res)
+	return fmt.Sprintf("%s)", res), nil
 }
-func FormForeignServerOpts(p map[string]string) string {
+func FormForeignServerOpts(p map[string]string) (string, error) {
+	if _, ok := p["dbname"]; !ok {
+		return "", fmt.Errorf("dbname not specified")
+	}
+	if _, ok := p["host"]; !ok {
+		return "", fmt.Errorf("host not specified")
+	}
+	if _, ok := p["port"]; !ok {
+		return "", fmt.Errorf("port not specified")
+	}
+
 	res := fmt.Sprintf("options (dbname %s, host %s, port '%s')",
 		QL(p["dbname"]),
 		QL(p["host"]),
 		p["port"])
-	return res
+	return res, nil
 }
 
 // PG's quote_identifier. FIXME keywords
@@ -346,4 +359,29 @@ func QI(ident string) string {
 func QL(lit string) string {
 	var sql_str_escaper = strings.NewReplacer(`'`, `''`)
 	return fmt.Sprintf("'%s'", sql_str_escaper.Replace(lit))
+}
+
+func P(relname string, pnum int) string {
+	return fmt.Sprintf("%s_%d", relname, pnum)
+}
+func PI(relname string, pnum int) string {
+	return QI(P(relname, pnum))
+}
+func PL(relname string, pnum int) string {
+	return QL(P(relname, pnum))
+}
+func FP(relname string, pnum int) string {
+	return fmt.Sprintf("%s_%d_fdw", relname, pnum)
+}
+func FPI(relname string, pnum int) string {
+	return QI(FP(relname, pnum))
+}
+func FPL(relname string, pnum int) string {
+	return QL(FP(relname, pnum))
+}
+func FSI(rgid int) string {
+	return fmt.Sprintf("hp_rg_%d", rgid)
+}
+func FSL(rgid int) string {
+	return fmt.Sprintf("'hp_rg_%d'", rgid)
 }
