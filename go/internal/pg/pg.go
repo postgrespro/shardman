@@ -140,7 +140,7 @@ func broadcastConnMain(in <-chan interface{}, resch chan<- resT, reportch chan<-
 					report.err = fmt.Errorf("sql \n%v\n failed: %v", sql, err)
 				}
 
-				// TODO Assume queries return single text attr or nothing
+				// TODO currently assuming queries return single text attr or nothing
 				for rows.Next() {
 					err = rows.Scan(&res)
 					if err != nil {

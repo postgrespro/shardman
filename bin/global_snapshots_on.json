@@ -1,0 +1,10 @@
+{
+    "pgParameters" : {
+	"max_prepared_transactions": "200",
+	"default_transaction_isolation": "repeatable read",
+	"track_global_snapshots": "on",
+	"global_snapshot_defer_time": "5",
+	"postgres_fdw.use_global_snapshots": "on",
+	"postgres_fdw.use_repeatable_read": "on"
+    }
+}

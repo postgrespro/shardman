@@ -4,9 +4,11 @@ script_dir=`dirname "$(readlink -f "$0")"`
 source "${script_dir}/common.sh"
 
 # install ext
+export PATH="${pgbinpath}/:$PATH"
 cd "${script_dir}/../ext"
 make clean
 make install
+echo $PATH
 
 # build go
 cd "${script_dir}/../go"
@@ -30,7 +32,7 @@ for cluster in $(seq 1 $clusters); do
     nohup stolon-sentinel --cluster-name "cluster_${cluster}" >/tmp/sentinel_$cluster.log 2>&1 &
     for inst in $(seq 1 $instances); do
 	echo "Starting keeper keeper_${inst} at ${datadirs[i]}"
-	nohup stolon-keeper --cluster-name "cluster_${cluster}" --data-dir "${datadirs[i]}" --pg-listen-address "localhost" --pg-port "${ports[i]}" --uid "keeper_${inst}" --pg-repl-username repluser --pg-repl-auth-method trust --pg-su-auth-method trust >/tmp/keeper_${cluster}_${inst}.log 2>&1 &
+	nohup stolon-keeper --pg-bin-path "${pgbinpath}" --cluster-name "cluster_${cluster}" --data-dir "${datadirs[i]}" --pg-listen-address "localhost" --pg-port "${ports[i]}" --uid "keeper_${inst}" --pg-repl-username repluser --pg-repl-auth-method trust --pg-su-auth-method trust >/tmp/keeper_${cluster}_${inst}.log 2>&1 &
 	let "i+=1"
     done
 done

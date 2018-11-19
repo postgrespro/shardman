@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx"
 	"github.com/spf13/cobra"
@@ -78,7 +79,7 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	if err != nil {
 		die("Unable to create extension: %v", err)
 	}
-	err = conn.QueryRow("select system_identifier from pg_control_system()").Scan(&newrg.SystemId)
+	err = conn.QueryRow("select system_identifier from pg_control_system()").Scan(&newrg.SysId)
 	if err != nil {
 		die("Failed to retrieve sysid: %v", err)
 	}
@@ -89,8 +90,8 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	}
 	var newrgid int = 0
 	for rgid, rg := range rgs {
-		if rg.SystemId == newrg.SystemId {
-			die("Repgroup with sys id %v already exists", rg.SystemId)
+		if rg.SysId == newrg.SysId {
+			die("Repgroup with sys id %v already exists", rg.SysId)
 		}
 		if rgid > newrgid {
 			newrgid = rgid
@@ -99,10 +100,32 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	newrgid++
 	rgs[newrgid] = &newrg
 
-	// TODO: wait until config is actually applied
 	err = store.StolonUpdate(&newrg, newrgid, true, cldata.StolonSpec)
 	if err != nil {
 		die(err.Error())
+	}
+	// We just enabled prepared xacts and going to use them in broadcast;
+	// wait until change is actually applied
+	for {
+		stderr("Waiting for config apply...")
+		var max_prepared_transactions int
+		update_conf_conn, err := pgx.Connect(connconfig)
+		if err != nil {
+			die("Unable to connect to database: %v", err)
+		}
+		err = update_conf_conn.QueryRow("select setting::int from pg_settings where name='max_prepared_transactions'").Scan(&max_prepared_transactions)
+		if err != nil {
+			update_conf_conn.Close()
+			die("Failed to check max_prepared_transactions: %v", err)
+		}
+		if max_prepared_transactions == 0 {
+			time.Sleep(1 * time.Second)
+		} else {
+			stderr("Done")
+			update_conf_conn.Close()
+			break
+		}
+		update_conf_conn.Close()
 	}
 
 	bcst, err := pg.NewBroadcaster(rgs, cldata)

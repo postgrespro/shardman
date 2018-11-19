@@ -30,6 +30,7 @@ type ClusterStore interface {
 	PutRepGroups(ctx context.Context, rgs map[int]*cluster.RepGroup) error
 	GetTables(ctx context.Context) ([]cluster.Table, *KVPair, error)
 	PutTables(ctx context.Context, tables []cluster.Table) error
+	UpdateStolonSpec(ctx context.Context, spec *cluster.StolonSpec, patch bool) error
 	Close() error
 }
 
@@ -185,12 +186,16 @@ func (cs *clusterStoreImpl) UpdateStolonSpec(ctx context.Context, spec *cluster.
 		newspec = spec
 	}
 
+	// sj, _ := json.Marshal(newspec)
+	// log.Printf("new spec is \n%v", string(sj))
 	rgs, _, err := cs.GetRepGroups(ctx)
 	if err != nil {
 		return err
 	}
 	for rgid, rg := range rgs {
-		if err = StolonUpdate(rg, rgid, false, newspec); err != nil {
+		// we always patch to preserve unspecified stolon defaults, e.g.
+		// initMode is required
+		if err = StolonUpdate(rg, rgid, true, newspec); err != nil {
 			return err
 		}
 	}

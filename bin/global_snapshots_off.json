@@ -1,0 +1,8 @@
+{
+    "pgParameters" : {
+	"default_transaction_isolation": "read committed",
+	"track_global_snapshots": "off",
+	"postgres_fdw.use_global_snapshots": "off",
+	"postgres_fdw.use_repeatable_read": "on"
+    }
+}

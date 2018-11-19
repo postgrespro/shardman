@@ -1,6 +1,8 @@
 # pgpath=~/postgres/install/shardman_musl
 start_port=5432
 
+pgbinpath=/home/ars/postgres/install/shardman/bin
+
 etcd_datadir=/tmp/etcd_datadir
 datadir_prefix="/tmp"
 # datadir_prefix="${HOME}/tmp/tmp"

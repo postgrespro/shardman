@@ -31,7 +31,7 @@ type RepGroup struct {
 	StoreKey           string
 	StoreSkipTLSVerify bool
 	StorePrefix        string
-	SystemId           int64
+	SysId              int64
 }
 
 // Sharded tables
@@ -50,7 +50,7 @@ type Master struct {
 }
 
 // From Stolon
-// Copyright 2015 Sorint.lab under Apache License, Version 2.0 
+// Copyright 2015 Sorint.lab under Apache License, Version 2.0
 // Duration is needed to be able to marshal/unmarshal json strings with time
 // unit (eg. 3s, 100ms) instead of ugly times in nanoseconds.
 type Duration struct {
@@ -127,6 +127,8 @@ type StandbySettings struct {
 
 type SUReplAccessMode string
 
+// note that we stamp omitempty everywhere, unlike in stolon -- if user hasn't
+// specified something in spec patch, it must not be touched
 type StolonSpec struct {
 	// Interval to wait before next check
 	SleepInterval *Duration `json:"sleepInterval,omitempty"`
@@ -168,12 +170,12 @@ type StolonSpec struct {
 	MaxSynchronousStandbys *uint16 `json:"maxSynchronousStandbys,omitempty"`
 	// AdditionalWalSenders defines the number of additional wal_senders in
 	// addition to the ones internally defined by stolon
-	AdditionalWalSenders *uint16 `json:"additionalWalSenders"`
+	AdditionalWalSenders *uint16 `json:"additionalWalSenders,omitempty"`
 	// AdditionalMasterReplicationSlots defines additional replication slots to
 	// be created on the master postgres instance. Replication slots not defined
 	// here will be dropped from the master instance (i.e. manually created
 	// replication slots will be removed).
-	AdditionalMasterReplicationSlots []string `json:"additionalMasterReplicationSlots"`
+	AdditionalMasterReplicationSlots []string `json:"additionalMasterReplicationSlots,omitempty"`
 	// Whether to use pg_rewind
 	UsePgrewind *bool `json:"usePgrewind,omitempty"`
 	// InitMode defines the cluster initialization mode. Current modes are: new, existing, pitr
@@ -199,8 +201,8 @@ type StolonSpec struct {
 	// Map of postgres parameters
 	PGParameters PGParameters `json:"pgParameters,omitempty"`
 	// Additional pg_hba.conf entries
-	// we don't set omitempty since we want to distinguish between null or empty slice
-	PGHBA []string `json:"pgHBA"`
+	// Stolon doesn't set omitempty since it wants to distinguish between null or empty slice, what?
+	PGHBA []string `json:"pgHBA,omitempty"`
 	// Enable automatic pg restart when pg parameters that requires restart changes
-	AutomaticPgRestart *bool `json:"automaticPgRestart"`
+	AutomaticPgRestart *bool `json:"automaticPgRestart,omitempty"`
 }
