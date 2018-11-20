@@ -56,7 +56,7 @@ func NewStolonStore(rg *cluster.RepGroup) (*StolonStore, error) {
 }
 
 // Copy needed fragments from Stolon...
-// Copyright 2015 Sorint.lab under Apache License, Version 2.0
+// Copyright 2015 Sorint.lab under Apache License, Version 2.0 (in licenses/apache-2.0)
 type ClusterData struct {
 	DBs   map[string]*DB `json:"dbs"`
 	Proxy *Proxy         `json:"proxy"`
