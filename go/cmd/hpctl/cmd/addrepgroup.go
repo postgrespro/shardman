@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx"
@@ -111,6 +112,10 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		var max_prepared_transactions int
 		update_conf_conn, err := pgx.Connect(connconfig)
 		if err != nil {
+			// system is shutting down
+			if strings.Contains(err.Error(), "SQLSTATE 57P03") {
+				continue
+			}
 			die("Unable to connect to database: %v", err)
 		}
 		err = update_conf_conn.QueryRow("select setting::int from pg_settings where name='max_prepared_transactions'").Scan(&max_prepared_transactions)

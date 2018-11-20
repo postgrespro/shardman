@@ -25,3 +25,7 @@ hpctl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-n
 hpctl --cluster-name haha update --patch -f "${script_dir}"/global_snapshots.json '{ "synchronousReplication" : true }'
 
 hpmon --cluster-name haha
+
+hpctl forall --cluster-name haha  --sql "drop extension hodgepodge;"
+hpctl forall --cluster-name haha  --sql "create extension hodgepodge;"
+make -C ~/postgres/hodgepodge/ext/ clean && make -C ~/postgres/hodgepodge/ext/ install && hpctl forall --cluster-name haha  --sql "drop extension hodgepodge;" && hpctl forall --cluster-name haha  --sql "create extension hodgepodge;"

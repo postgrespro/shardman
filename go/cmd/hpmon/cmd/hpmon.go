@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,13 +28,27 @@ import (
 
 // Here we will store args
 var cfg cmdcommon.CommonConfig
+var noXR bool
+var noDD bool
+var checkDeadlockIntervalRaw string
+var checkDeadlockInterval time.Duration
 
 var hpmonCmd = &cobra.Command{
-	Use:   "hpmon",
-	Short: "Hodgepodge monitor. Ensures that all replication groups are aware of current partitions positions. Running several instances is safe.",
+	Use: "hpmon",
+	Short: `Hodgepodge monitor. It
+  * Ensures that all replication groups are aware of current partitions positions.
+  * Resolves 2PC (distributed) transactions.
+  * Resolves deadlocks.
+Running several instances is safe.
+`,
 	PersistentPreRun: func(c *cobra.Command, args []string) {
-		if err := cmdcommon.CheckConfig(&cfg); err != nil {
+		var err error
+		if err = cmdcommon.CheckConfig(&cfg); err != nil {
 			log.Fatalf(err.Error())
+		}
+		checkDeadlockInterval, err = parseDuration(checkDeadlockIntervalRaw)
+		if err != nil {
+			log.Fatalf(fmt.Sprintf("wrong deadlock interval: %v", err.Error()))
 		}
 	},
 	Run: hpmon,
@@ -47,14 +63,45 @@ func Execute() {
 
 func init() {
 	cmdcommon.AddCommonFlags(hpmonCmd, &cfg)
+	hpmonCmd.PersistentFlags().BoolVar(&noXR, "no-xact-resolver", false, "don't run xact resolver")
+	hpmonCmd.PersistentFlags().BoolVar(&noDD, "no-deadlock-detector", false, "don't run deadlock detector")
+	hpmonCmd.PersistentFlags().StringVar(&checkDeadlockIntervalRaw, "deadlock-timeout", "2s", "interval between deadlock checks. Accepted formats are the same as in PostgreSQL's GUCs; default unit is ms, as in PG's deadlock_timeout")
+
+	// randomize seed
+	rand.Seed(time.Now().Unix())
+}
+
+var durationRegexp = regexp.MustCompile(`^([0-9]+)[\s]*(ms|s|min|h|d|)$`)
+
+func parseDuration(raw string) (time.Duration, error) {
+	var modifier time.Duration
+	matches := durationRegexp.FindStringSubmatch(raw)
+	if len(matches) < 2 {
+		return 0, fmt.Errorf("Failed to parse duration %s", raw)
+	}
+	var n, _ = strconv.ParseInt(matches[1], 10, 64)
+	switch matches[2] {
+	case "ms", "":
+		modifier = time.Millisecond
+	case "s":
+		modifier = time.Second
+	case "m":
+		modifier = time.Minute
+	case "h":
+		modifier = time.Hour
+	case "d":
+		modifier = time.Hour * 24
+	}
+	return modifier * time.Duration(n), nil
 }
 
 type hpMonState struct {
-	cs              store.ClusterStore
-	ctx             context.Context
-	workers         map[int]chan clusterState // rgid is the key
-	xact_resolverch chan clusterState
-	wg              sync.WaitGroup
+	cs                  store.ClusterStore
+	ctx                 context.Context
+	workers             map[int]chan clusterState // rgid is the key
+	xact_resolverch     chan clusterState
+	deadlock_detectorch chan clusterState
+	wg                  sync.WaitGroup
 }
 
 // what is sharded and current masters, fed into workers
@@ -67,19 +114,28 @@ type repGroupState struct {
 	connstrmap map[string]string
 }
 
+// TODO: we should we add ctx to all pg's commands to prevent any worker
+// hanging, blocking everything
 func hpmon(c *cobra.Command, args []string) {
 	var state hpMonState
 	state.workers = make(map[int]chan clusterState)
 	state.xact_resolverch = make(chan clusterState)
+	state.deadlock_detectorch = make(chan clusterState)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	state.ctx = ctx
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start xact resolver
-	state.wg.Add(1)
-	go xactResolverMain(ctx, state.xact_resolverch, &state.wg)
+	// Start xact resolver and deadlock detector
+	if !noXR {
+		state.wg.Add(1)
+		go xactResolverMain(ctx, state.xact_resolverch, &state.wg)
+	}
+	if !noDD {
+		state.wg.Add(1)
+		go deadlockDetectorMain(ctx, state.deadlock_detectorch, &state.wg)
+	}
 
 	// TODO: watch instead of polling
 	reloadStoreTimerCh := time.NewTimer(0).C
@@ -159,7 +215,12 @@ func reloadStore(state *hpMonState) {
 	for _, in := range state.workers {
 		in <- clstate
 	}
-	state.xact_resolverch <- clstate // push it to xact resolver also
+	if !noXR {
+		state.xact_resolverch <- clstate // push it to xact resolver also
+	}
+	if !noDD {
+		state.deadlock_detectorch <- clstate // push it to deadlock detector also
+	}
 
 	return
 StoreError:
@@ -508,9 +569,9 @@ MainLoop:
 
 		case state.clstate = <-clstatechan:
 			// shut down workers for removed repgroups
-			for rgid, in := range state.xrworkers {
+			for rgid, ch := range state.xrworkers {
 				if _, ok := state.clstate.rgs[rgid]; !ok {
-					close(in)
+					close(ch)
 					delete(state.xrworkers, rgid)
 				}
 			}
@@ -676,6 +737,7 @@ func xactResolverWorkerMain(ctx context.Context, rgid int, in <-chan interface{}
 					conn = nil
 					retryConnTimer = time.NewTimer(0)
 				}
+				connstr = newconnstr
 
 			case xStatusRequest:
 				if conn == nil {
@@ -773,4 +835,355 @@ func xrw_connfail(connp **pgx.Conn, retryConnTimerp **time.Timer) {
 	(*connp).Close()
 	*connp = nil
 	*retryConnTimerp = time.NewTimer(0)
+}
+
+func dd_log(format string, a ...interface{}) {
+	log.Printf("Deadlock detector main: "+format, a...)
+}
+
+type collectGraph struct{}
+
+// a process holding/waiting lock
+type proc struct {
+	sysid int64
+	pid   int
+}
+type edge struct {
+	wait proc
+	hold proc
+}
+
+// lock graph as delivered from each node
+type localLockGraph struct {
+	rgid  int
+	err   error
+	edges []edge
+}
+type cancelBackend struct {
+	pid int
+}
+type cancelBackendResponse struct {
+	err error
+	res bool
+}
+
+// debug
+func rgidBySysid(sysid int64, rgs map[int]*repGroupState) int {
+	for rgid, rg := range rgs {
+		if rg.sysId == sysid {
+			return rgid
+		}
+	}
+	return -1
+}
+func pprintEdges(edges []edge, rgs map[int]*repGroupState) string {
+	var res = ""
+	for _, e := range edges {
+		res = res + fmt.Sprintf("%d:%d->%d:%d\n",
+			rgidBySysid(e.wait.sysid, rgs), e.wait.pid,
+			rgidBySysid(e.hold.sysid, rgs), e.hold.pid)
+	}
+	return res
+}
+func pprintLockGraph(lock_graph map[proc][]proc, rgs map[int]*repGroupState) string {
+	var res = ""
+	for p, edges := range lock_graph {
+		res = res + fmt.Sprintf("%d:%d:\n",
+			rgidBySysid(p.sysid, rgs), p.pid)
+		for _, e := range edges {
+			res = res + fmt.Sprintf("  %d:%d\n", rgidBySysid(e.sysid, rgs), e.pid)
+		}
+	}
+	return res
+}
+func pprintDeadlock(deadlock []proc, rgs map[int]*repGroupState) string {
+	var res = ""
+	for _, p := range deadlock {
+		res = res + fmt.Sprintf("%d:%d->", rgidBySysid(p.sysid, rgs), p.pid)
+	}
+	return res
+}
+
+// Deadlock detector. Again, to save CPU we try to keep connections persistent.
+// In hope to increase probability of consistent picture we collect graphs in
+// parallel, i.e. again each repgroup is served by its own goroutine. However,
+// the communcation is pretty simple as it is entirely synchronous. We just need
+// to make sure workers exit *after* main starts shutdown, or main might hang
+// sending stuff to them.
+// Because we can not make consistent distributed snapshot, collected global
+// local graph can contain "false" loops.  So we report deadlock only if
+// detected loop persists during deadlock detection period.
+func deadlockDetectorMain(ctx context.Context, clstatechan chan clusterState, wg *sync.WaitGroup) {
+	defer wg.Done()
+	checkDeadlockTicker := time.NewTicker(checkDeadlockInterval)
+	defer checkDeadlockTicker.Stop()
+
+	var ddworkers = make(map[int]chan interface{})
+	var in = make(chan interface{})
+	var clstate clusterState
+	var ddWg sync.WaitGroup
+	var previousDeadlock []proc = nil
+
+	dd_log("starting")
+
+	for {
+		select {
+		case <-ctx.Done():
+			for _, ch := range ddworkers {
+				close(ch)
+			}
+			ddWg.Wait()
+			dd_log("stopped")
+			return
+
+		case clstate = <-clstatechan:
+			// shut down workers for removed repgroups
+			for rgid, ch := range ddworkers {
+				if _, ok := clstate.rgs[rgid]; !ok {
+					previousDeadlock = nil
+					close(ch)
+					delete(ddworkers, rgid)
+				}
+			}
+			// spin up workers for new repgroups
+			for rgid, _ := range clstate.rgs {
+				if _, ok := ddworkers[rgid]; !ok {
+					ddWg.Add(1)
+					ddworkers[rgid] = make(chan interface{})
+					go deadlockDetectorWorker(rgid, ddworkers[rgid], in, clstate, &ddWg)
+				}
+			}
+
+		case <-checkDeadlockTicker.C:
+			for _, ch := range ddworkers {
+				ch <- collectGraph{}
+			}
+			var fail = false
+			// for each vertex, all outbound edges
+			var lockGraph = make(map[proc][]proc)
+			for i := 0; i < len(ddworkers); i++ {
+				llg := (<-in).(localLockGraph)
+				if llg.err != nil {
+					dd_log("failed to collect lock graph at repgroup %d: %v", llg.rgid, llg.err)
+					fail = true
+					continue
+				}
+				for _, e := range llg.edges {
+					if _, ok := lockGraph[e.wait]; !ok {
+						lockGraph[e.wait] = []proc{e.hold}
+					} else {
+						lockGraph[e.wait] = append(lockGraph[e.wait], e.hold)
+					}
+					// *all* procs must be in lockGraph, even if
+					// they don't wait for anything themselves
+					if _, ok := lockGraph[e.hold]; !ok {
+						lockGraph[e.hold] = []proc{}
+					}
+				}
+				// dd_log("collected lg from %d:\n%v", llg.rgid, pprintEdges(llg.edges, clstate.rgs))
+			}
+			if fail {
+				// loops collected with failure between them are unreliable
+				previousDeadlock = nil
+				continue
+			}
+			dd_log("DEBUG: full graph is\n%v", pprintLockGraph(lockGraph, clstate.rgs))
+			deadlock := findDeadlock(lockGraph)
+			if deadlock != nil {
+				dd_log("DEBUG: found deadlock!\n  %v\n", pprintDeadlock(deadlock, clstate.rgs))
+				dd_log("DEBUG: prev deadlock:\n  %v\n", pprintDeadlock(previousDeadlock, clstate.rgs))
+				if deadlocksEquivalent(deadlock, previousDeadlock) {
+					// time to kill someone
+					victim_idx := rand.Intn(len(deadlock))
+					victim := deadlock[victim_idx]
+					victim_rgid := rgidBySysid(victim.sysid, clstate.rgs)
+					dd_log("INFO: Deadlock discovered:\n  %v\n  Canceling pid %d at repgroup %d...",
+						pprintDeadlock(deadlock, clstate.rgs), victim.pid, victim_rgid)
+					ddworkers[victim_rgid] <- cancelBackend{pid: victim.pid}
+					tbr := (<-in).(cancelBackendResponse)
+					if tbr.err != nil {
+						dd_log("INFO: failed to cancel backend %d at repgroup %d: %v",
+							victim.pid, victim_rgid, tbr.err)
+					} else if !tbr.res {
+						dd_log("INFO: Canceling backend %d at repgroup %d missed: pg_cancel_backend returned false",
+							victim.pid, victim_rgid)
+					} else {
+						dd_log("INFO: successfully canceled backend %d at repgroup %d",
+							victim.pid, victim_rgid)
+					}
+				}
+			}
+			previousDeadlock = deadlock
+
+		case msg := <-in:
+			switch msg := msg.(type) {
+			case localLockGraph:
+				log.Printf("%v", msg)
+			}
+		}
+	}
+}
+
+func deadlockDetectorWorker(rgid int, in <-chan interface{}, out chan<- interface{}, clstate clusterState, wg *sync.WaitGroup) {
+	var conn *pgx.Conn = nil
+	var connstr string = pg.ConnString(clstate.rgs[rgid].connstrmap)
+
+	for {
+		msg, ok := <-in
+		if !ok {
+			if conn != nil {
+				conn.Close()
+			}
+			wg.Done()
+			return
+
+		}
+		switch msg := msg.(type) {
+		case clusterState:
+			newconnstr := pg.ConnString(msg.rgs[rgid].connstrmap)
+			// if connstr changed, invalidate connection
+			if conn != nil && newconnstr != connstr {
+				conn.Close()
+				conn = nil
+			}
+
+		case collectGraph:
+			if conn == nil {
+				connconfig, err := pgx.ParseConnectionString(connstr)
+				if err != nil {
+					out <- localLockGraph{rgid: rgid, err: err}
+					continue
+				}
+				conn, err = pgx.Connect(connconfig)
+				if err != nil {
+					out <- localLockGraph{rgid: rgid, err: err}
+					continue
+				}
+			}
+			var err error
+			var rows *pgx.Rows
+			var edges = make([]edge, 0, 128)
+			rows, err = conn.Query("select * from hodgepodge.lock_graph_native_types")
+			if err != nil {
+				goto ConnError
+			}
+			for rows.Next() {
+				var e edge
+				err = rows.Scan(&e.wait.sysid, &e.wait.pid, &e.hold.sysid, &e.hold.pid)
+				if err != nil {
+					goto ConnError // xxx panic here?
+				}
+				edges = append(edges, e)
+			}
+			if rows.Err() != nil {
+				goto ConnError
+			}
+			out <- localLockGraph{rgid: rgid, err: nil, edges: edges}
+			continue
+		ConnError:
+			conn.Close()
+			conn = nil
+			out <- localLockGraph{rgid: rgid, err: err}
+
+		case cancelBackend:
+			// conn *must* be not nil here; we terminate iff
+			// collected graph successfully
+			var res bool
+			err := conn.QueryRow(fmt.Sprintf("select pg_cancel_backend(%d)",
+				msg.pid)).Scan(&res)
+			if err != nil {
+				conn.Close()
+				conn = nil
+			}
+			out <- cancelBackendResponse{res: res, err: err}
+		}
+	}
+}
+
+// wrapper of []proc for findDeadlock to remember visited vertices
+type vertex struct {
+	e       []proc // outbound edges
+	visited bool
+	// set to true when we have checked all paths from vertex and ensured
+	// there is no loop
+	no_deadlocks bool
+}
+
+// Actually find the loop. Returns nil if it doesn't exist, random one otherwise.
+func findDeadlock(lockGraph map[proc][]proc) []proc {
+	// wrap []proc edges into struct vertex to remember visited vertices
+	var lockGraphV = make(map[proc]*vertex)
+	for p, edges := range lockGraph {
+		lockGraphV[p] = &vertex{e: edges, visited: false, no_deadlocks: false}
+	}
+	// For each vertice v, start dfs from v looking for deadlocks
+	for p, _ := range lockGraphV {
+		deadlock := findDeadlockWorkhorse(lockGraphV, nil, p)
+		if deadlock != nil {
+			// Returned path might contain not only the loop itself,
+			// but also initial tail. Trim it here. We also cut copy
+			// of doubled vertex, it is *not* included in the
+			// final res: deadlock[len(deadlock) - 1] -> deadlock[0]
+			// link is assumed.
+			var deadlock_member proc = deadlock[len(deadlock)-1]
+			for i, p := range deadlock {
+				if p == deadlock_member {
+					return deadlock[i : len(deadlock)-1]
+				}
+			}
+			return deadlock
+		}
+	}
+	return nil
+}
+
+// one step: with 'path' passed, visit p and its childs. If deadlock if found,
+// returns it; the last vertex closures the loop. Otherwise returns nil.
+func findDeadlockWorkhorse(lockGraph map[proc]*vertex, path []proc, p proc) []proc {
+	var vp *vertex = lockGraph[p]
+	// return immediatly, if we have checked p before
+	if vp.no_deadlocks {
+		return nil
+	}
+	path = append(path, p)
+	if vp.visited {
+		return path // found!
+	}
+	// ok, mark that we were here
+	vp.visited = true
+	// and let's go deeper
+	for _, child := range vp.e {
+		deadlock := findDeadlockWorkhorse(lockGraph, path, child)
+		if deadlock != nil {
+			return deadlock
+		}
+	}
+	// not found; remember there is nothing to do here
+	vp.no_deadlocks = true
+	// And note that this vertex is not in path anymore. Actually, this is not
+	// necessary as we use 'no_deadlocks' optimization: if already seen vertex
+	// doesn't belong to any loop, we ping back from it immediately
+	vp.visited = false
+	return nil
+}
+
+// deadlocks collected at different times might be shifted
+func deadlocksEquivalent(d1 []proc, d2 []proc) bool {
+	if len(d1) != len(d2) {
+		return false
+	}
+	var start_p proc = d1[0]
+	var i2 int = 0
+	for i, p := range d2 {
+		if p == start_p {
+			i2 = i
+		}
+	}
+	for _, p1 := range d1 {
+		if p1 != d2[i2] {
+			return false
+		}
+		i2 = (i2 + 1) % len(d1)
+	}
+	return true
 }
