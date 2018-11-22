@@ -7,8 +7,8 @@ DATA = $(EXTENSION)--$(EXTVERSION).sql
 REGRESS = shardman_installation
 
 MODULE_big = hodgepodge
-OBJS = hodgepodge.o
-PGFILEDESC = "hodgepodge - sharding for Postgres"
+OBJS = hodgepodge.o postgres_fdw/postgres_fdw.o postgres_fdw/option.o postgres_fdw/deparse.o postgres_fdw/connection.o postgres_fdw/shippable.o $(WIN32RES)
+PGFILEDESC = "A bunch of stuff forming sharding"
 
 ifndef USE_PGXS # hmm, user didn't requested to use pgxs
 # relative path to this makefile
@@ -35,7 +35,9 @@ ifdef USE_PGXS # use pgxs
 ifndef PG_CONFIG
 	PG_CONFIG := pg_config
 endif
-PG_CONFIG = pg_config
+INCLUDEDIR := $(shell $(PG_CONFIG) --includedir)
+PG_CPPFLAGS += -I$(INCLUDEDIR) # add server's include directory for libpq-fe.h
+SHLIB_LINK += -lpq # add libpq
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
@@ -44,7 +46,6 @@ else # assume the extension is in contrib/ dir of pg distribution
 EXTRA_INSTALL = contrib/postgres_fdw
 subdir = contrib/hodgepodge
 top_builddir = ../..
-# Add pathman to shared preload libraries when running regression tests
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
 endif

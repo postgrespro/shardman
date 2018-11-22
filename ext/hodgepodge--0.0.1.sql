@@ -119,3 +119,18 @@ create view lock_graph(wait, hold) as
 -- to avoid bothering with custom types
 create view lock_graph_native_types(wait_sysid, wait_pid, hold_sysid, hold_pid) as
     select (wait).node_sysid, (wait).pid, (hold).node_sysid, (hold).pid from lock_graph;
+
+-- postgres_fdw
+CREATE FUNCTION postgres_fdw_handler()
+RETURNS fdw_handler
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+CREATE FUNCTION postgres_fdw_validator(text[], oid)
+RETURNS void
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+CREATE FOREIGN DATA WRAPPER hodgepodge_postgres_fdw
+  HANDLER postgres_fdw_handler
+  VALIDATOR postgres_fdw_validator;

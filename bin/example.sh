@@ -22,7 +22,8 @@ hpctl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-n
 hpctl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_3
 
 # enable global snapshots
-hpctl --cluster-name haha update --patch -f "${script_dir}"/global_snapshots.json '{ "synchronousReplication" : true }'
+hpctl --cluster-name haha update --patch -f "${script_dir}"/global_snapshots.json
+hpctl --cluster-name haha update --patch '{ "pgParameters": {"shared_preload_libraries" : "hodgepodge" }}'
 
 hpmon --cluster-name haha
 

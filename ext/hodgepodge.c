@@ -11,6 +11,8 @@
 #include "fmgr.h"
 #include "utils/guc.h"
 
+#include "postgres_fdw/postgres_fdw.h"
+
 /* ensure that extension won't load against incompatible version of Postgres */
 PG_MODULE_MAGIC;
 
@@ -34,4 +36,6 @@ _PG_init()
 		PGC_SUSET,
 		0,
 		NULL, NULL, NULL);
+
+	postgres_fdw_PG_init();
 }
