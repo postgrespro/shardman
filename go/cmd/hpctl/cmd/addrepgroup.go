@@ -76,7 +76,11 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	}
 	defer conn.Close()
 
-	_, err = conn.Exec("create extension if not exists hodgepodge cascade")
+	_, err = conn.Exec("drop extension if exists hodgepodge cascade")
+	if err != nil {
+		die("Unable to drop ext: %v", err)
+	}
+	_, err = conn.Exec("create extension hodgepodge cascade")
 	if err != nil {
 		die("Unable to create extension: %v", err)
 	}
@@ -140,6 +144,8 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	defer bcst.Close()
 
 	bcst.Begin()
+	// forbid all DDL during rg addition
+	bcst.PushAll("lock hodgepodge.repgroups in access exclusive mode")
 	// create foreign servers to all rgs at newrg and vice versa
 	newrgconnstrmap, err := store.GetSuConnstrMap(context.TODO(), &newrg, cldata)
 	newrgumopts, _ := pg.FormUserMappingOpts(newrgconnstrmap)
@@ -157,34 +163,39 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		}
 		rgumopts, _ := pg.FormUserMappingOpts(rgconnstrmap)
 		rgfsopts, _ := pg.FormForeignServerOpts(rgconnstrmap)
-		bcst.Push(newrgid, fmt.Sprintf("drop server if exists hp_rg_%d cascade", rgid))
-		bcst.Push(newrgid, fmt.Sprintf("create server hp_rg_%d foreign data wrapper postgres_fdw %s", rgid, rgfsopts))
-		bcst.Push(rgid, fmt.Sprintf("drop server if exists hp_rg_%d cascade", newrgid))
-		bcst.Push(rgid, fmt.Sprintf("create server hp_rg_%d foreign data wrapper postgres_fdw %s", newrgid, newrgfsopts))
-		bcst.Push(newrgid, fmt.Sprintf("drop user mapping if exists for current_user server hp_rg_%d", rgid))
-		bcst.Push(newrgid, fmt.Sprintf("create user mapping for current_user server hp_rg_%d %s", rgid, rgumopts))
-		bcst.Push(rgid, fmt.Sprintf("drop user mapping if exists for current_user server hp_rg_%d", newrgid))
-		bcst.Push(rgid, fmt.Sprintf("create user mapping for current_user server hp_rg_%d %s", newrgid, newrgumopts))
+		bcst.Push(newrgid, fmt.Sprintf("drop server if exists %s cascade", pg.FSI(rgid)))
+		bcst.Push(newrgid, fmt.Sprintf("create server %s foreign data wrapper hodgepodge_postgres_fdw %s", pg.FSI(rgid), rgfsopts))
+		bcst.Push(newrgid, fmt.Sprintf("insert into hodgepodge.repgroups values (%d, (select oid from pg_foreign_server where srvname = %s))",
+			rgid, pg.FSL(rgid)))
+		bcst.Push(rgid, fmt.Sprintf("drop server if exists %s cascade", pg.FSI(newrgid)))
+		bcst.Push(rgid, fmt.Sprintf("create server %s foreign data wrapper hodgepodge_postgres_fdw %s", pg.FSI(newrgid), newrgfsopts))
+		bcst.Push(rgid, fmt.Sprintf("insert into hodgepodge.repgroups values (%d, (select oid from pg_foreign_server where srvname = %s))",
+			newrgid, pg.FSL(newrgid)))
+		// create sudo user mappings
+		bcst.Push(newrgid, fmt.Sprintf("drop user mapping if exists for current_user server %s", pg.FSI(rgid)))
+		bcst.Push(newrgid, fmt.Sprintf("create user mapping for current_user server %s %s", pg.FSI(rgid), rgumopts))
+		bcst.Push(rgid, fmt.Sprintf("drop user mapping if exists for current_user server %s", pg.FSI(newrgid)))
+		bcst.Push(rgid, fmt.Sprintf("create user mapping for current_user server %s %s", pg.FSI(newrgid), newrgumopts))
 	}
-	// create tables and foreign partitions
-	tables, _, err := cs.GetTables(context.TODO())
-	if err != nil {
-		die("Failed to get tables from store: %v", err)
-	}
-	for _, table := range tables {
-		bcst.Push(newrgid, fmt.Sprintf("drop table if exists %s cascade",
-			pg.QI(table.Relname)))
-		bcst.Push(newrgid, table.Sql)
-		for pnum := 0; pnum < table.Nparts; pnum++ {
-			bcst.Push(newrgid, fmt.Sprintf("create foreign table %s partition of %s for values with (modulus %d, remainder %d) server hp_rg_%d options (table_name %s)",
-				pg.QI(fmt.Sprintf("%s_%d_fdw", table.Relname, pnum)),
-				pg.QI(table.Relname),
-				table.Nparts,
-				pnum,
-				table.Partmap[pnum],
-				pg.QL(fmt.Sprintf("%s_%d", table.Relname, pnum))))
-		}
-	}
+	// TODO: pgdump
+	// tables, _, err := cs.GetTables(context.TODO())
+	// if err != nil {
+	// 	die("Failed to get tables from store: %v", err)
+	// }
+	// for _, table := range tables {
+	// 	bcst.Push(newrgid, fmt.Sprintf("drop table if exists %s cascade",
+	// 		pg.QI(table.Relname)))
+	// 	bcst.Push(newrgid, table.Sql)
+	// 	for pnum := 0; pnum < table.Nparts; pnum++ {
+	// 		bcst.Push(newrgid, fmt.Sprintf("create foreign table %s partition of %s for values with (modulus %d, remainder %d) server hp_rg_%d options (table_name %s)",
+	// 			pg.QI(fmt.Sprintf("%s_%d_fdw", table.Relname, pnum)),
+	// 			pg.QI(table.Relname),
+	// 			table.Nparts,
+	// 			pnum,
+	// 			table.Partmap[pnum],
+	// 			pg.QL(fmt.Sprintf("%s_%d", table.Relname, pnum))))
+	// 	}
+	// }
 	_, err = bcst.Commit(true)
 	if err != nil {
 		die("bcst failed: %v", err)

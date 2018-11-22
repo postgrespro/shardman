@@ -350,7 +350,7 @@ func monWorkerFull(w *monWorker) {
 				goto ConnError
 			}
 			_, err = w.conn.Exec(fmt.Sprintf(
-				"create server hp_rg_%d foreign data wrapper postgres_fdw %s",
+				"create server hp_rg_%d foreign data wrapper hodgepodge_postgres_fdw %s",
 				rgid, newfsopts))
 			if err != nil {
 				w.log("%v", err)

@@ -209,6 +209,12 @@ func (bcst *Broadcaster) Push(id int, sql string) {
 	bcst.conns[id].in <- sql
 }
 
+func (bcst *Broadcaster) PushAll(sql string) {
+	for _, bconn := range bcst.conns {
+		bconn.in <- sql
+	}
+}
+
 func (bcst *Broadcaster) Commit(twophase bool) (map[int]string, error) {
 	var results = map[int]string{}
 	if twophase {

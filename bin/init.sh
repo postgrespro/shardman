@@ -19,8 +19,8 @@ pkill stolon-sentinel || true
 pkill -9 postgres || true
 pkill etcd || true
 
-rm -rf "{etcd_datadir}"
-nohup etcd --data-dir "${etcd_datadir}" >/tmp/etcd.log 2>&1 &
+rm -rf "${etcd_datadir}"
+nohup etcd --auto-compaction-retention=1 --data-dir "${etcd_datadir}" >/tmp/etcd.log 2>&1 &
 # let etcd start
 sleep 5
 

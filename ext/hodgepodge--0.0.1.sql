@@ -10,24 +10,31 @@
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "CREATE EXTENSION hodgepodge" to load this file. \quit
 
--- List of nodes present in the cluster
-create table nodes (
+-- List of replication groups present in the cluster, *excluding* us
+create table repgroups (
 	id int primary key,
-	system_id bigint not null unique,
-	connection_string text unique not null
+        srvid oid  -- references pg_foreign_server(oid)
 );
 
--- list of sharded tables
-create table tables (
-	relation text primary key     -- table name
+-- sharded tables
+create table sharded_tables (
+	relid oid primary key,  -- references pg_class(oid)
+	nparts int
 );
 
 -- main partitions
-create table partitions (
-	part_name text primary key,
-	node_id int references nodes(id),
-	relation text not null references tables(relation) on delete cascade
+create table parts (
+        relid oid references sharded_tables(relid),
+	pnum int,
+	part_name text,
+	rgid int references repgroups(id), -- current owner
+	primary key (relid, pnum)
 );
+
+/* ex wrapper */
+create function ex_sql(rgid int, cmd text) returns void as 'MODULE_PATHNAME' language C;
+/* bcst wrapper */
+create function bcst_sql(cmd text) returns void as 'MODULE_PATHNAME' language C;
 
 -- Get subscription status
 create function is_subscription_ready(sname text) returns bool as $$

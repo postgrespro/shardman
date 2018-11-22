@@ -84,8 +84,9 @@ func initCluster(cmd *cobra.Command, args []string) {
 			"log_min_messages":          "INFO",
 			"max_prepared_transactions": "100",
 			// FIXME: stolon forces hot_standby, apparently for its own conns
-			"hot_standby": "off", // disable connections to replicas
-			"wal_level":   "logical",
+			// "hot_standby": "off", // disable connections to replicas
+			"wal_level":                "logical", // rebalance
+			"shared_preload_libraries": "hodgepodge",
 		},
 		AutomaticPgRestart: &autopgrestart,
 	}
