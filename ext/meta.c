@@ -26,9 +26,17 @@
 #define Anum_sharded_tables_nparts			2
 #define Anum_sharded_tables_colocated_with	3
 
+#define Natts_parts							4
+#define Anum_parts_rel						1
+#define Anum_parts_pnum						2
+#define Anum_parts_part_name				3
+#define Anum_parts_rgid						4
+
 static Oid HpNamespaceOid(void);
 static Oid RepgroupsIndexOid(void);
 static Oid ShardedTablesOid(void);
+static Oid PartsOid(void);
+static Oid PartsIndexOid(void);
 
 /* TODO: caching */
 static Oid HpNamespaceOid(void)
@@ -54,6 +62,16 @@ static Oid ShardedTablesOid(void)
 static Oid ShardedTablesIndexOid(void)
 {
 	return get_relname_relid("sharded_tables_pkey", HpNamespaceOid());
+}
+
+static Oid PartsOid(void)
+{
+	return get_relname_relid("parts", HpNamespaceOid());
+}
+
+static Oid PartsIndexOid(void)
+{
+	return get_relname_relid("parts_pkey", HpNamespaceOid());
 }
 
 /* Get foreign server oid by rgid. Errors out if there is no such rgid. */
@@ -126,4 +144,47 @@ bool RelIsSharded(Oid relid)
 	systable_endscan(scan_desc);
 	heap_close(rel, AccessShareLock);
 	return found;
+}
+
+/* Delete from local metadata */
+void DropShardedRel(Oid relid)
+{
+	Relation rel;
+	SysScanDesc scan_desc;
+	ScanKeyData key[1];
+	HeapTuple tuple;
+
+	/* Delete parts */
+	rel = heap_open(PartsOid(), RowExclusiveLock);
+	ScanKeyInit(&key[0],
+				Anum_sharded_tables_rel,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+	scan_desc = systable_beginscan(rel,
+								   PartsIndexOid(),
+								   true, NULL, 1, key);
+
+	while (HeapTupleIsValid(tuple = systable_getnext(scan_desc)))
+	{
+		simple_heap_delete(rel, &(tuple->t_self));
+	}
+	systable_endscan(scan_desc);
+	heap_close(rel, RowExclusiveLock);
+
+	/* Delete row from sharded_tables */
+	rel = heap_open(ShardedTablesOid(), RowExclusiveLock);
+	ScanKeyInit(&key[0],
+				Anum_sharded_tables_rel,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+	scan_desc = systable_beginscan(rel,
+								   ShardedTablesIndexOid(),
+								   true, NULL, 1, key);
+
+	while (HeapTupleIsValid(tuple = systable_getnext(scan_desc)))
+	{
+		simple_heap_delete(rel, &(tuple->t_self));
+	}
+	systable_endscan(scan_desc);
+	heap_close(rel, RowExclusiveLock);
 }

@@ -19,4 +19,5 @@
 extern Oid ServerIdByRgid(int rgid, bool *isnull);
 
 extern Oid RepgroupsOid(void);
-bool RelIsSharded(Oid rel);
+extern bool RelIsSharded(Oid rel);
+extern void DropShardedRel(Oid rel);

@@ -64,10 +64,6 @@ func initCluster(cmd *cobra.Command, args []string) {
 		stdout("WARNING: overriding existing cluster")
 	}
 
-	err = cs.PutTables(context.TODO(), []cluster.Table{})
-	if err != nil {
-		die("failed to save tables data in store")
-	}
 	err = cs.PutRepGroups(context.TODO(), map[int]*cluster.RepGroup{})
 	if err != nil {
 		die("failed to save repgroup data in store")

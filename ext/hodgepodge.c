@@ -99,6 +99,7 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 							 DestReceiver *dest, char *completionTag)
 {
 	bool broadcast = false;
+	bool consider_broadcast;
 	Node *parsetree = pstmt->utilityStmt;
 	int stmt_start = pstmt->stmt_location > 0 ? pstmt->stmt_location : 0;
 	int stmt_len = pstmt->stmt_len > 0 ? pstmt->stmt_len : strlen(queryString + stmt_start);
@@ -109,11 +110,10 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 	hp_log2("HPProcessUtility stmt %s, node %s, coordinator %d", stmt_string, nodeToString(parsetree), AmCoordinator());
 
 	/*
-	 * Never broadcast in these cases. No need to broadcast extenstion objects,
-	 * we broadcast CREATE EXTENSTION itself.
+	 * We broadcast only in these cases. No need to broadcast extenstion
+	 * objects, we broadcast CREATE EXTENSTION itself.
 	 */
-	if (!AmCoordinator() || !broadcast_utility || creating_extension)
-		goto end_of_switch;
+	consider_broadcast = AmCoordinator() && broadcast_utility && !creating_extension;
 
 	// TODO TODO TODO
 	switch (nodeTag(parsetree))
@@ -123,8 +123,11 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 		case T_GrantStmt:
 		case T_GrantRoleStmt:
 		case T_ClusterStmt:
-			broadcast = true;
+		{
+			if (consider_broadcast)
+				broadcast = true;
 			break;
+		}
 
 		case T_CreateStmt:
 			{
@@ -140,14 +143,19 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 						goto end_of_switch;
 				}
 
-				broadcast = true;
+				if (consider_broadcast)
+					broadcast = true;
+				break;
 			}
 			break;
 
 
 		case T_DefineStmt:
-			broadcast = true;
+		{
+			if (consider_broadcast)
+				broadcast = true;
 			break;
+		}
 
 		case T_DropStmt:
 			{
@@ -157,7 +165,8 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 				{
 					ListCell   *cell1;
 
-					foreach(cell1, stmt->objects) {
+					foreach(cell1, stmt->objects)
+					{
 						Node	   *object = lfirst(cell1);
 
 						if (strcmp(strVal((Value *) object), "hodgepodge") == 0)
@@ -166,9 +175,24 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 				} else if (stmt->removeType == OBJECT_FOREIGN_SERVER)
 				{
 					goto end_of_switch;
+				} else if (stmt->removeType == OBJECT_TABLE)
+				{
+					ListCell *cell;
+
+					/* When removing sharded table, purge metadata */
+					foreach(cell, stmt->objects)
+					{
+						RangeVar *rv = makeRangeVarFromNameList((List *) lfirst(cell));
+						Oid relid = RangeVarGetRelid(rv, AccessExclusiveLock, false);
+						if (RelIsSharded(relid))
+						{
+							DropShardedRel(relid);
+						}
+					}
 				}
 
-				broadcast = true;
+				if (consider_broadcast)
+					broadcast = true;
 			}
 			break;
 
@@ -234,8 +258,11 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 		case T_CreateAmStmt:
 		case T_CreateStatsStmt:
 		case T_AlterCollationStmt:
-			broadcast = true;
+		{
+			if (consider_broadcast)
+				broadcast = true;
 			break;
+		}
 
 		default:
 			break;
