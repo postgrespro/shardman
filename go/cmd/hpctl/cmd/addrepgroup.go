@@ -111,6 +111,8 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	}
 	// We just enabled prepared xacts and going to use them in broadcast;
 	// wait until change is actually applied
+	var max_attemtps = 3
+	var attempt = 1
 	for {
 		stderr("Waiting for config apply...")
 		var max_prepared_transactions int
@@ -118,9 +120,15 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		if err != nil {
 			// system is shutting down
 			if strings.Contains(err.Error(), "SQLSTATE 57P03") {
+				time.Sleep(1 * time.Second)
 				continue
 			}
-			die("Unable to connect to database: %v", err)
+			if attempt == max_attemtps {
+				die("Unable to connect to database: %v", err)
+			}
+			attempt++
+			time.Sleep(1 * time.Second)
+			continue
 		}
 		err = update_conf_conn.QueryRow("select setting::int from pg_settings where name='max_prepared_transactions'").Scan(&max_prepared_transactions)
 		if err != nil {
@@ -153,6 +161,8 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	if err != nil {
 		die("Failed to get new rg connstr")
 	}
+	// insert myself
+	bcst.Push(newrgid, fmt.Sprintf("insert into hodgepodge.repgroups values (%d, null)", newrgid))
 	for rgid, rg := range rgs {
 		if rgid == newrgid {
 			continue

@@ -7,7 +7,7 @@ DATA = $(EXTENSION)--$(EXTVERSION).sql
 REGRESS = shardman_installation
 
 MODULE_big = hodgepodge
-OBJS = hodgepodge.o postgres_fdw/postgres_fdw.o postgres_fdw/option.o postgres_fdw/deparse.o postgres_fdw/connection.o postgres_fdw/shippable.o $(WIN32RES)
+OBJS = hodgepodge.o meta.o postgres_fdw/postgres_fdw.o postgres_fdw/option.o postgres_fdw/deparse.o postgres_fdw/connection.o postgres_fdw/shippable.o $(WIN32RES)
 PGFILEDESC = "A bunch of stuff forming sharding"
 
 ifndef USE_PGXS # hmm, user didn't requested to use pgxs

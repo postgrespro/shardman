@@ -10,7 +10,8 @@
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "CREATE EXTENSION hodgepodge" to load this file. \quit
 
--- List of replication groups present in the cluster, *excluding* us
+-- List of replication groups present in the cluster, *including* us.
+-- myself's srvid is null
 create table repgroups (
 	id int primary key,
         srvid oid  -- references pg_foreign_server(oid)
@@ -18,23 +19,76 @@ create table repgroups (
 
 -- sharded tables
 create table sharded_tables (
-	relid oid primary key,  -- references pg_class(oid)
-	nparts int
+	rel oid primary key,  -- references pg_class(oid)
+	nparts int,
+	colocated_with oid references sharded_tables(rel)
 );
 
 -- main partitions
 create table parts (
-        relid oid references sharded_tables(relid),
+        rel oid references sharded_tables(rel),
 	pnum int,
 	part_name text,
 	rgid int references repgroups(id), -- current owner
-	primary key (relid, pnum)
+	primary key (rel, pnum)
 );
 
 /* ex wrapper */
 create function ex_sql(rgid int, cmd text) returns void as 'MODULE_PATHNAME' language C;
-/* bcst wrapper */
+/* Bcst wrapper */
 create function bcst_sql(cmd text) returns void as 'MODULE_PATHNAME' language C;
+/* BcstAll wrapper */
+create function bcst_all_sql(cmd text) returns void as 'MODULE_PATHNAME' language C;
+
+create function hash_shard_table(relid regclass, nparts int, colocate_with regclass = null) returns void as $$
+declare
+  rgids int[];
+  nrgids int;
+  rgid int;
+  holder_rgid int;
+  -- raw relname without any quotation
+  relname name := relname from pg_class where oid = relid;
+  part_name name;
+  fdw_part_name name;
+begin
+  if exists (select 1 from hodgepodge.sharded_tables t where t.rel = relid) then
+    raise exception 'table % is already sharded', relid;
+  end if;
+  if colocate_with is not null and not exists(select 1 from hodgepodge.sharded_tables t where t.rel = colocate_with) then
+    raise exception 'colocated table % is not sharded', relid;
+  end if;
+
+  -- record table as sharded everywhere
+  -- note that printing regclass automatically quotes it
+  perform hodgepodge.bcst_all_sql(format('insert into hodgepodge.sharded_tables values (%L::regclass, %s, %L::regclass)',
+                                         relid, nparts, colocate_with));
+
+  -- Get repgroups in random order
+  select array(select id from hodgepodge.repgroups order by random()) into rgids;
+  nrgids := array_length(rgids, 1);
+
+  for i in 0..nparts-1 loop
+    if colocate_with is null then
+      holder_rgid := rgids[1 + (i % nrgids)]; -- round robin
+    else
+      holder_rgid := p.rgid from hodgepodge.parts p where p.rel = colocate_with and p.pnum = i;
+    end if;
+
+    -- on each rg, create real or foreign partition
+    part_name := format('%s_%s', relname, i);
+    fdw_part_name := format('%s_fdw', part_name);
+    raise log 'putting part % on %', part_name, holder_rgid;
+    for rgid in select id from hodgepodge.repgroups loop
+      if rgid = holder_rgid then
+        perform hodgepodge.ex_sql(rgid, format('create table %I partition of %I for values with (modulus %s, remainder %s)',
+	                                   part_name, relname, nparts, i));
+      else
+        perform hodgepodge.ex_sql(rgid, format('create foreign table %I partition of %I for values with (modulus %s, remainder %s) server hp_rg_%s options (table_name %L)',
+	                                   fdw_part_name, relname, nparts, i, holder_rgid, quote_ident(part_name)));
+      end if;
+    end loop;
+  end loop;
+end $$ language plpgsql;
 
 -- Get subscription status
 create function is_subscription_ready(sname text) returns bool as $$

@@ -6,11 +6,13 @@
  *
  * -------------------------------------------------------------------------
  */
+
 #include "postgres.h"
 
 #include "access/htup_details.h"
 #include "catalog/namespace.h"
 #include "commands/extension.h"
+#include "executor/spi.h"
 #include "utils/fmgroids.h"
 #include "fmgr.h"
 #include "miscadmin.h"
@@ -20,6 +22,8 @@
 #include "utils/rel.h"
 #include "utils/guc.h"
 
+#include "hodgepodge.h"
+#include "meta.h"
 #include "postgres_fdw/postgres_fdw.h"
 
 /* ensure that extension won't load against incompatible version of Postgres */
@@ -28,45 +32,26 @@ PG_MODULE_MAGIC;
 /* SQL funcs */
 PG_FUNCTION_INFO_V1(ex_sql);
 PG_FUNCTION_INFO_V1(bcst_sql);
+PG_FUNCTION_INFO_V1(bcst_all_sql);
 
 /* GUC variables */
-static int node_id;
+int MyRgid;
 static bool broadcast_utility;
 
-extern void _PG_init(void);
-
-static bool am_coordinator(void);
+static bool AmCoordinator(void);
 static void HPProcessUtility(PlannedStmt *pstmt,
 							 const char *queryString, ProcessUtilityContext context,
 							 ParamListInfo params,
 							 QueryEnvironment *queryEnv,
 							 DestReceiver *dest, char *completionTag);
-static Oid hp_namespace_oid(void);
-static Oid repgroups_oid(void);
-static void ex(int rgid, char *sql);
-static void bcst(char *sql);
-static void ex_server(Oid serverid, char *sql);
+static void Ex(int rgid, char *sql);
+static void ExLocal(char *sql);
+static void BcstAll(char *sql);
+static void Bcst(char *sql);
+static void ExServer(Oid serverid, char *sql);
+static void do_sql_command(ConnCacheEntry *entry, char *sql);
 
 static ProcessUtility_hook_type PreviousProcessUtilityHook;
-
-#ifndef DEBUG_LEVEL
-#define DEBUG_LEVEL 0
-#endif
-
-#define HP_TAG "[HP] "
-#define hp_elog(level,fmt,...) elog(level, HP_TAG fmt, ## __VA_ARGS__)
-
-#if DEBUG_LEVEL == 0
-#define hp_log1(fmt, ...) elog(LOG, HP_TAG fmt, ## __VA_ARGS__)
-#define hp_log2(fmt, ...)
-#elif DEBUG_LEVEL == 1
-#define hp_log1(fmt, ...) elog(LOG, HP_TAG fmt, ## __VA_ARGS__)
-#define hp_log2(fmt, ...) elog(LOG, HP_TAG fmt, ## __VA_ARGS__)
-#endif
-
-#define Natts_repgroups				2
-#define Anum_repgroups_id			1
-#define Anum_repgroups_srvid		2	/* partition expression (original) */
 
 
 /*
@@ -79,7 +64,7 @@ _PG_init()
 		"hodgepodge.rgid",
 		"My replication group id",
 		NULL,
-		&node_id,
+		&MyRgid,
 		-1, -1, 4096, /* boot, min, max */
 		PGC_SUSET,
 		0,
@@ -102,22 +87,7 @@ _PG_init()
 	postgres_fdw_PG_init();
 }
 
-Datum
-ex_sql(PG_FUNCTION_ARGS) {
-	int rgid = PG_GETARG_INT32(0);
-	char* sql = text_to_cstring(PG_GETARG_TEXT_PP(1));
-	ex(rgid, sql);
-	PG_RETURN_VOID();
-}
-
-Datum
-bcst_sql(PG_FUNCTION_ARGS) {
-	char* sql = text_to_cstring(PG_GETARG_TEXT_PP(0));
-	bcst(sql);
-	PG_RETURN_VOID();
-}
-
-static bool am_coordinator(void)
+static bool AmCoordinator(void)
 {
 	return strstr(application_name, "pgfdw:") == NULL;
 }
@@ -136,6 +106,14 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 
 	strncpy(stmt_string, queryString + stmt_start, stmt_len);
 	stmt_string[stmt_len] = '\0';
+	hp_log2("HPProcessUtility stmt %s, node %s, coordinator %d", stmt_string, nodeToString(parsetree), AmCoordinator());
+
+	/*
+	 * Never broadcast in these cases. No need to broadcast extenstion objects,
+	 * we broadcast CREATE EXTENSTION itself.
+	 */
+	if (!AmCoordinator() || !broadcast_utility || creating_extension)
+		goto end_of_switch;
 
 	// TODO TODO TODO
 	switch (nodeTag(parsetree))
@@ -145,11 +123,30 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 		case T_GrantStmt:
 		case T_GrantRoleStmt:
 		case T_ClusterStmt:
+			broadcast = true;
+			break;
+
 		case T_CreateStmt:
-		case T_DefineStmt:
-			if (am_coordinator() && broadcast_utility && !creating_extension) {
+			{
+				/* skip creation of sharded table's partition */
+				CreateStmt *stmt = (CreateStmt *) parsetree;
+
+				if (stmt->partbound)
+				{
+					RangeVar *parent = linitial_node(RangeVar, stmt->inhRelations);
+					Oid parent_oid = RangeVarGetRelid(parent, NoLock, false);
+
+					if (RelIsSharded(parent_oid))
+						goto end_of_switch;
+				}
+
 				broadcast = true;
 			}
+			break;
+
+
+		case T_DefineStmt:
+			broadcast = true;
 			break;
 
 		case T_DropStmt:
@@ -171,9 +168,7 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 					goto end_of_switch;
 				}
 
-				if (am_coordinator() && broadcast_utility && !creating_extension) {
-					broadcast = true;
-				}
+				broadcast = true;
 			}
 			break;
 
@@ -186,9 +181,9 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 		case T_ViewStmt:
 		case T_LoadStmt:
 		case T_CreateDomainStmt:
-		case T_CreatedbStmt:
-		case T_DropdbStmt:
-		case T_VacuumStmt:
+		/* case T_CreatedbStmt: */
+		/* case T_DropdbStmt: */
+		/* case T_VacuumStmt: */
 		case T_CreateTableAsStmt:
 		case T_CreateTrigStmt:
 		case T_CreatePLangStmt:
@@ -239,9 +234,7 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 		case T_CreateAmStmt:
 		case T_CreateStatsStmt:
 		case T_AlterCollationStmt:
-			if (am_coordinator() && broadcast_utility && !creating_extension) {
-				broadcast = true;
-			}
+			broadcast = true;
 			break;
 
 		default:
@@ -265,90 +258,89 @@ end_of_switch:
 	if (broadcast)
 	{
 		hp_log1("Broadcasting stmt %s, node %s", stmt_string, nodeToString(parsetree));
-		bcst(stmt_string);
+		Bcst(stmt_string);
 
 	}
 }
 
 
-/* TODO: caching */
-static Oid hp_namespace_oid(void)
-{
-	return get_namespace_oid("hodgepodge", false);
+Datum
+ex_sql(PG_FUNCTION_ARGS) {
+	int rgid = PG_GETARG_INT32(0);
+	char* sql = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	Ex(rgid, sql);
+	PG_RETURN_VOID();
 }
 
-static Oid repgroups_oid(void)
-{
-	return get_relname_relid("repgroups", hp_namespace_oid());
+Datum
+bcst_sql(PG_FUNCTION_ARGS) {
+	char* sql = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	Bcst(sql);
+	PG_RETURN_VOID();
 }
 
-static Oid repgroups_index_oid(void)
-{
-	return get_relname_relid("repgroups_pkey", hp_namespace_oid());
+Datum bcst_all_sql(PG_FUNCTION_ARGS) {
+	char *sql = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	BcstAll(sql);
+	PG_RETURN_VOID();
 }
 
-/* execute no-data-returning cmd on given external rgid */
-static void ex(int rgid, char *sql)
+/* execute no-data-returning cmd on given rgid */
+static void Ex(int rgid, char *sql)
 {
-	Relation rel;
-	SysScanDesc scan_desc;
-	ScanKeyData key[1];
-	HeapTuple repgroup_tuple;
-	TupleDesc tupleDescriptor;
 	bool isnull;
-	Datum serverid_datum;
 	Oid serverid;
 
-	rel = heap_open(repgroups_oid(), AccessShareLock);
-	/* find tuple */
-	ScanKeyInit(&key[0],
-				Anum_repgroups_id,
-				BTEqualStrategyNumber, F_INT4EQ,
-				Int32GetDatum(rgid));
-
-	scan_desc = systable_beginscan(rel,
-										repgroups_index_oid(),
-										true, NULL, 1, key);
-
-	repgroup_tuple = systable_getnext(scan_desc);
-	if (HeapTupleIsValid(repgroup_tuple))
-	{
-		/* let's practice a bit in copying tuples */
-		repgroup_tuple = heap_copytuple(repgroup_tuple);
-	}
-	else
-	{
-		elog(ERROR, "external repgroup with id %d not found", rgid);
-	}
-
-	systable_endscan(scan_desc);
-	heap_close(rel, AccessShareLock);
-
-	/* make sense of it */
-	tupleDescriptor = RelationGetDescr(rel);
-	serverid_datum = heap_getattr(repgroup_tuple,
-							   Anum_repgroups_srvid,
-							   tupleDescriptor,
-							   &isnull);
+	serverid = ServerIdByRgid(rgid, &isnull);
 	if (isnull)
 	{
-		elog(ERROR, "srv for rgid %d not defined", rgid);
+		/* execute on myself */
+		Assert(rgid == MyRgid);
+		ExLocal(sql);
+		return;
 	}
-	serverid = DatumGetObjectId(serverid_datum);
-	heap_freetuple(repgroup_tuple);
 
-	ex_server(serverid, sql);
+	/* external */
+	hp_log2("executing cmd %s on external rgid %d", sql, rgid);
+	ExServer(serverid, sql);
 }
 
-/* execute cmd on all external repgroups */
-static void bcst(char *sql)
+/* execute command locally via SPI */
+static void ExLocal(char *sql)
+{
+	int ret;
+
+	hp_log2("executing local cmd %s", sql);
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	{
+		hp_elog(ERROR, "SPI_connect failed: %d", ret);
+	}
+
+	if ((ret = SPI_exec(sql, 0)) < 0)
+	{
+		hp_elog(ERROR, "SPI_exec failed: %d", ret);
+	}
+	SPI_finish();
+}
+
+/* execute command on all repgroups, including myself */
+static void BcstAll(char *sql)
+{
+	/* execute on me */
+	ExLocal(sql);
+	/* and everywhere else */
+	Bcst(sql);
+}
+
+/* execute cmd on all *external* repgroups */
+static void Bcst(char *sql)
 {
 	Relation rel;
 	SysScanDesc scan;
 	TupleDesc tupleDescriptor;
 	HeapTuple tuple;
 
-	rel = heap_open(repgroups_oid(), AccessShareLock);
+	rel = heap_open(RepgroupsOid(), AccessShareLock);
 	tupleDescriptor = RelationGetDescr(rel);
 
 	scan = systable_beginscan(rel, 0, true, NULL, 0, NULL);
@@ -361,8 +353,8 @@ static void bcst(char *sql)
 												 Anum_repgroups_srvid,
 												 tupleDescriptor,
 												 &isnull));
-		/* no good to run cmd here: if we fail, rel leaks, so first read everything */
-		ex_server(serverid, sql);
+		if (!isnull)
+			ExServer(serverid, sql);
 	}
 
 	systable_endscan(scan);
@@ -370,18 +362,34 @@ static void bcst(char *sql)
 }
 
 /* execute cmd on given foreign server */
-static void ex_server(Oid serverid, char *sql)
+static void ExServer(Oid serverid, char *sql)
 {
 	UserMapping *user;
 	ConnCacheEntry *entry;
-	PGconn *conn;
-	PGresult *res;
+	char *spathcmd;
 
 	user = GetUserMapping(GetUserId(), serverid);
 	entry = GetConnection(user, false);
 	pfree(user);
-	conn = ConnectionEntryGetConn(entry);
 
+	/*
+	 * postgres_fdw relies on search path being "pg_catalog", set current one
+	 * and restore it back later
+	 */
+	spathcmd = psprintf("set search_path = %s", namespace_search_path);
+	do_sql_command(entry, spathcmd);
+	pfree(spathcmd);
+	do_sql_command(entry, sql);
+	do_sql_command(entry, "set search_path = pg_catalog");
+}
+
+/* we could export this from connection.c */
+static void do_sql_command(ConnCacheEntry *entry, char *sql)
+{
+	PGconn *conn;
+	PGresult *res;
+
+	conn = ConnectionEntryGetConn(entry);
 	if (!PQsendQuery(conn, sql))
 		pgfdw_report_error(ERROR, NULL, conn, false, sql);
 	res = pgfdw_get_result(entry, sql);
