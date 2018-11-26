@@ -36,7 +36,7 @@ var checkDeadlockInterval time.Duration
 var hpmonCmd = &cobra.Command{
 	Use: "hpmon",
 	Short: `Hodgepodge monitor. It
-  * Ensures that all replication groups are aware of current partitions positions.
+  * Ensures that all replication groups are aware of current locations of other repgroups.
   * Resolves 2PC (distributed) transactions.
   * Resolves deadlocks.
 Running several instances is safe.
@@ -106,8 +106,7 @@ type hpMonState struct {
 
 // what is sharded and current masters, fed into workers
 type clusterState struct {
-	tables []cluster.Table
-	rgs    map[int]*repGroupState
+	rgs map[int]*repGroupState
 }
 type repGroupState struct {
 	sysId      int64
@@ -205,12 +204,6 @@ func reloadStore(state *hpMonState) {
 		clstate.rgs[rgid] = &repGroupState{connstrmap: connstrmap, sysId: rg.SysId}
 	}
 
-	clstate.tables, _, err = state.cs.GetTables(state.ctx)
-	if err != nil {
-		log.Printf("Failed to get tables from the store: %v", err)
-		goto StoreError
-	}
-
 	// Send current state to all workers. They must not scribble on it.
 	for _, in := range state.workers {
 		in <- clstate
@@ -290,7 +283,7 @@ func monWorkerMain(ctx context.Context, rgid int, in <-chan clusterState, wg *sy
 	}
 }
 
-// actually perform full cycle: fix user mappings, foreign servers, partitions
+// actually perform full cycle: fix foreign servers
 func monWorkerFull(w *monWorker) {
 	// w.log("DEBUG: monWorkerFull")
 	var err error
@@ -317,6 +310,19 @@ func monWorkerFull(w *monWorker) {
 		connstrmap := rg.connstrmap
 
 		// foreign server
+		var fs_exists bool
+		err = w.conn.QueryRow(fmt.Sprintf(
+			"select exists (select 1 from pg_foreign_server where srvname = 'hp_rg_%d')",
+			rgid)).Scan(&fs_exists)
+		if err != nil {
+			w.log("failed to check fs existence: %v", err)
+			goto ConnError
+		}
+		if !fs_exists {
+			/* should never happen */
+			w.log("ERROR: foreign server for rgid %d doesn't exist", rgid)
+			goto ConnError
+		}
 		rows, err := w.conn.Query(fmt.Sprintf(
 			"select split_part(opt, '=', 1) k, split_part(opt, '=', 2) v from (select unnest(srvoptions) opt from pg_foreign_server where srvname = 'hp_rg_%d') o;",
 			rgid))
@@ -341,137 +347,30 @@ func monWorkerFull(w *monWorker) {
 		newfsopts, _ = pg.FormForeignServerOpts(connstrmap)
 		currfsopts, err = pg.FormForeignServerOpts(currfsoptsmap)
 		if err != nil || currfsopts != newfsopts {
-			// Need to recreate foreign server
-			w.log("Recreating foreign server to rg %d", rgid)
-			_, err = w.conn.Exec(fmt.Sprintf(
-				"drop server if exists hp_rg_%d cascade", rgid))
-			if err != nil {
-				w.log("%v", err)
-				goto ConnError
-			}
-			_, err = w.conn.Exec(fmt.Sprintf(
-				"create server hp_rg_%d foreign data wrapper hodgepodge_postgres_fdw %s",
-				rgid, newfsopts))
-			if err != nil {
-				w.log("%v", err)
-				goto ConnError
-			}
-
-		}
-
-		// user mapping
-		rows, err = w.conn.Query(fmt.Sprintf(
-			`select split_part(opt, '=', 1) k, split_part(opt, '=', 2) v from
-(select unnest(umoptions) opt from pg_user_mapping um, pg_foreign_server fs where fs.srvname = 'hp_rg_%d' and fs.oid = um.umserver) o;`,
-			rgid))
-		if err != nil {
-			w.log("failed to retrieve um info: %v", err)
-			goto ConnError
-		}
-		var currumoptsmap = make(map[string]string)
-		var currumopts, newumopts string
-		for rows.Next() {
-			err = rows.Scan(&key, &value)
-			if err != nil {
-				w.log("%v", err)
-				goto ConnError
-			}
-			currumoptsmap[key] = value
-		}
-		if rows.Err() != nil {
-			w.log("%v", rows.Err())
-			goto ConnError
-		}
-		newumopts, _ = pg.FormUserMappingOpts(connstrmap)
-		currumopts, err = pg.FormUserMappingOpts(currumoptsmap)
-		if err != nil || currumopts != newumopts {
-			// Need to recreate user mapping
-			w.log("Recreating user mapping to rg %d", rgid)
-			_, err = w.conn.Exec(fmt.Sprintf(
-				"drop user mapping if exists for current_user server hp_rg_%d",
-				rgid))
-			if err != nil {
-				w.log("%v", err)
-				goto ConnError
-			}
-			_, err = w.conn.Exec(fmt.Sprintf(
-				"create user mapping for current_user server hp_rg_%d %s",
-				rgid, newumopts))
-		}
-	}
-
-	for _, table := range w.clstate.tables {
-		for pnum, holder := range table.Partmap {
-			var part_in_tree bool
-			err = w.conn.QueryRow(fmt.Sprintf(
-				"select exists(select 1 from pg_inherits where inhparent::regclass::name = %s and inhrelid::regclass::name = %s)",
-				pg.QL(table.Relname), pg.PL(table.Relname, pnum))).Scan(&part_in_tree)
-			if err != nil {
-				w.log("Failed to check part in tree %v", err)
-				goto ConnError
-			}
-			if holder == w.rgid { // I am the holder
-				if part_in_tree {
-					continue // ok
-				}
-				w.log("Attaching real partition %s", pg.P(table.Relname, pnum))
+			/*
+			 * Need to update foreign server. We would like to avoid
+			 * recreating it to stay away from rebuilding foreign
+			 * tables and user mappings.
+			 */
+			w.log("altering foreign server to rg %d", rgid)
+			/* drop all currents opts */
+			for optname, _ := range currfsoptsmap {
 				_, err = w.conn.Exec(fmt.Sprintf(
-					"drop foreign table if exists %s cascade",
-					pg.FPI(table.Relname, pnum)))
+					"alter server hp_rg_%d options (drop %s)",
+					rgid, optname))
 				if err != nil {
-					w.log("%v", err)
-					goto ConnError
-				}
-				_, err = w.conn.Exec(fmt.Sprintf(
-					"alter table %s attach partition %s for values with (modulus %d, remainder %d)",
-					pg.QI(table.Relname), pg.PI(table.Relname, pnum), table.Nparts, pnum))
-				if err != nil {
-					w.log("%v", err)
-					goto ConnError
-				}
-			} else { // part is foreign
-				// detach real part, if it is in tree
-				if part_in_tree {
-					_, err = w.conn.Exec(fmt.Sprintf(
-						"alter table %s detach partition %s",
-						pg.QI(table.Relname), pg.PI(table.Relname, pnum)))
-					if err != nil {
-						w.log("%v", err)
-						goto ConnError
-					}
-				}
-
-				var ftable_ok bool // ftable in tree and points to proper server
-				err = w.conn.QueryRow(fmt.Sprintf(
-					`select exists(select 1 from pg_inherits i, pg_foreign_table ft, pg_foreign_server fs
-where i.inhparent::regclass::name = %s and i.inhrelid::regclass::name = %s and i.inhrelid = ft.ftrelid
-and fs.oid = ft.ftserver and fs.srvname = %s)`,
-					pg.QL(table.Relname), pg.FPL(table.Relname, pnum), pg.FSL(table.Partmap[pnum]))).Scan(&ftable_ok)
-				if err != nil {
-					w.log("Failed to check fdw part in tree %v", err)
-					goto ConnError
-				}
-				if ftable_ok {
-					continue // ok
-				}
-
-				w.log("Recreating foreign partition %s pointing to rg %d", pg.FP(table.Relname, pnum), table.Partmap[pnum])
-				_, err = w.conn.Exec(fmt.Sprintf(
-					"drop foreign table if exists %s cascade",
-					pg.FPI(table.Relname, pnum)))
-				if err != nil {
-					w.log("%v", err)
-					goto ConnError
-				}
-
-				_, err = w.conn.Exec(fmt.Sprintf(
-					"create foreign table %s partition of %s for values with (modulus %d, remainder %d) server %s options (table_name %s)",
-					pg.FPI(table.Relname, pnum), pg.QI(table.Relname), table.Nparts, pnum, pg.FSI(table.Partmap[pnum]), pg.PL(table.Relname, pnum)))
-				if err != nil {
-					w.log("%v", err)
+					w.log("failed to drop fs opts: %v", err)
 					goto ConnError
 				}
 			}
+			/* add all new opts */
+			_, err = w.conn.Exec(fmt.Sprintf(
+				"alter server hp_rg_%d %s", rgid, newfsopts))
+			if err != nil {
+				w.log("failed to set new fs opts: %v", err)
+				goto ConnError
+			}
+
 		}
 	}
 
@@ -987,7 +886,7 @@ func deadlockDetectorMain(ctx context.Context, clstatechan chan clusterState, wg
 				previousDeadlock = nil
 				continue
 			}
-			dd_log("DEBUG: full graph is\n%v", pprintLockGraph(lockGraph, clstate.rgs))
+			// dd_log("DEBUG: full graph is\n%v", pprintLockGraph(lockGraph, clstate.rgs))
 			deadlock := findDeadlock(lockGraph)
 			if deadlock != nil {
 				dd_log("DEBUG: found deadlock!\n  %v\n", pprintDeadlock(deadlock, clstate.rgs))
