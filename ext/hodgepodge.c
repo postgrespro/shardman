@@ -50,6 +50,7 @@ static void BcstAll(char *sql);
 static void Bcst(char *sql);
 static void ExServer(Oid serverid, char *sql);
 static void do_sql_command(ConnCacheEntry *entry, char *sql);
+static bool HodgepodgeLoaded(void);
 
 static ProcessUtility_hook_type PreviousProcessUtilityHook;
 
@@ -105,15 +106,33 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 	int stmt_len = pstmt->stmt_len > 0 ? pstmt->stmt_len : strlen(queryString + stmt_start);
 	char *stmt_string = palloc(stmt_len + 1);
 
+	if (!HodgepodgeLoaded())
+	{
+		if (PreviousProcessUtilityHook != NULL)
+		{
+			PreviousProcessUtilityHook(pstmt, queryString,
+									   context, params, queryEnv,
+									   dest, completionTag);
+		}
+		else
+		{
+			standard_ProcessUtility(pstmt, queryString,
+									context, params, queryEnv,
+									dest, completionTag);
+		}
+		return;
+	}
+
 	strncpy(stmt_string, queryString + stmt_start, stmt_len);
 	stmt_string[stmt_len] = '\0';
-	hp_log2("HPProcessUtility stmt %s, node %s, coordinator %d", stmt_string, nodeToString(parsetree), AmCoordinator());
+	hp_log3("HPProcessUtility stmt %s, node %s, coordinator %d", stmt_string, nodeToString(parsetree), AmCoordinator());
 
 	/*
 	 * We broadcast only in these cases. No need to broadcast extenstion
 	 * objects, we broadcast CREATE EXTENSTION itself.
 	 */
-	consider_broadcast = AmCoordinator() && broadcast_utility && !creating_extension;
+	consider_broadcast = AmCoordinator() && broadcast_utility &&
+		!creating_extension && MyRgid != -1;
 
 	// TODO TODO TODO
 	switch (nodeTag(parsetree))
@@ -183,8 +202,8 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 					foreach(cell, stmt->objects)
 					{
 						RangeVar *rv = makeRangeVarFromNameList((List *) lfirst(cell));
-						Oid relid = RangeVarGetRelid(rv, AccessExclusiveLock, false);
-						if (RelIsSharded(relid))
+						Oid relid = RangeVarGetRelid(rv, AccessExclusiveLock, true);
+						if (relid != InvalidOid && RelIsSharded(relid))
 						{
 							DropShardedRel(relid);
 						}
@@ -424,4 +443,11 @@ static void do_sql_command(ConnCacheEntry *entry, char *sql)
 		PQresultStatus(res) != PGRES_TUPLES_OK)
 		pgfdw_report_error(ERROR, res, conn, true, sql);
 	PQclear(res);
+}
+
+/* TODO: caching */
+static bool HodgepodgeLoaded()
+{
+	Oid extension_oid = get_extension_oid("hodgepodge", true);
+	return extension_oid != InvalidOid;
 }

@@ -44,6 +44,7 @@ type MoveTask struct {
 	src_connstr string
 	dst_rgid    int
 	dst_connstr string
+	schema      string
 	table_name  string
 	pnum        int
 }
@@ -55,7 +56,7 @@ func rebalance(cmd *cobra.Command, args []string) {
 	}
 	defer cs.Close()
 
-	tables, _, err := cs.GetTables(context.TODO())
+	tables, err := pg.GetTables(cs, context.TODO())
 	if err != nil {
 		die("Failed to get tables from the store: %v", err)
 	}
@@ -75,7 +76,7 @@ func rebalance(cmd *cobra.Command, args []string) {
 func even_rebalance(tables []cluster.Table, rgs map[int]*cluster.RepGroup) []MoveTask {
 	var tasks = make([]MoveTask, 0)
 	for _, table := range tables {
-		if table.ColocateWith != "" {
+		if table.ColocateWithRelname != "" {
 			continue // colocated tables follow their references
 		}
 		var parts_per_rg = make(map[int][]int)
@@ -114,6 +115,7 @@ func even_rebalance(tables []cluster.Table, rgs map[int]*cluster.RepGroup) []Mov
 			tasks = append(tasks, MoveTask{
 				src_rgid:   fattest_rgid,
 				dst_rgid:   leanest_rgid,
+				schema:     table.Schema,
 				table_name: table.Relname,
 				pnum:       moved_part,
 			})
@@ -123,10 +125,12 @@ func even_rebalance(tables []cluster.Table, rgs map[int]*cluster.RepGroup) []Mov
 			parts_per_rg[fattest_rgid] = fattest_parts[:len(fattest_parts)-1] // pop
 			// move part of colocated tables
 			for _, ctable := range tables {
-				if ctable.ColocateWith == table.Relname {
+				if ctable.ColocateWithSchema == table.Schema &&
+					ctable.ColocateWithRelname == table.Relname {
 					tasks = append(tasks, MoveTask{
 						src_rgid:   fattest_rgid,
 						dst_rgid:   leanest_rgid,
+						schema:     ctable.Schema,
 						table_name: ctable.Relname,
 						pnum:       moved_part,
 					})
@@ -166,7 +170,7 @@ const (
 	movePartWorkerWaitInitCopy
 	movePartWorkerWaitInitialCatchup
 	movePartWorkerWaitFullSync
-	movePartWorkerWaitCommit
+	movePartWorkerCommitting
 )
 
 func rwlog(id int, task MoveTask, format string, a ...interface{}) {
@@ -175,12 +179,13 @@ func rwlog(id int, task MoveTask, format string, a ...interface{}) {
 	log.Printf("Worker %d, moving part %d of table %s from %d to %d: "+format, args...)
 }
 
-// Attempt to clean up after ourselves, assuming task didn't commit. We try to
-// leave everything clean and consistent at least if rebalance was stopped by
-// signal and all pgs were healthy.
-func rwcleanup(src_conn **pgx.Conn, dst_conn **pgx.Conn, task *MoveTask, state int, id int) {
+// Attempt to clean up after ourselves. We try to leave everything clean and
+// consistent at least if rebalance was stopped by signal and all pgs were
+// healthy.
+func rwcleanup(src_conn **pgx.Conn, dst_conn **pgx.Conn, task *MoveTask, state int, id int) error {
 	var err error
-	log.Printf("state is %v", state)
+	var report_err error = nil
+	rwlog(id, *task, "rwcleanup: state is %v", state)
 	if state < movePartWorkerConnsEstablished {
 		goto CLOSE_CONNS // nothing to do except for closing conns
 	}
@@ -189,18 +194,30 @@ func rwcleanup(src_conn **pgx.Conn, dst_conn **pgx.Conn, task *MoveTask, state i
 		pg.QL(fmt.Sprintf("%s_%d", task.table_name, task.pnum))))
 	if err != nil {
 		rwlog(id, *task, "cleanup: write_protection_off failed: %v", err)
+		report_err = err
 	}
 
 	_, err = (*dst_conn).Exec(fmt.Sprintf("drop subscription if exists hp_copy_%d",
 		id))
 	if err != nil {
 		rwlog(id, *task, "cleanup: drop sub failed: %v", err)
+		report_err = err
 	}
 
 	_, err = (*src_conn).Exec(fmt.Sprintf("drop publication if exists hp_copy_%d",
 		id))
 	if err != nil {
 		rwlog(id, *task, "cleanup: drop pub failed: %v", err)
+		report_err = err
+	}
+
+	/*
+	 * if we failed during commit, we actually don't know whether it was
+	 * successfull or not. So we don't try to remove src part nor dst part;
+	 * this should be done in afterwards cleanup
+	 */
+	if state >= movePartWorkerCommitting {
+		goto CLOSE_CONNS
 	}
 
 	log.Printf("running cleanup: on dst %s", fmt.Sprintf("drop table if exists %s",
@@ -209,6 +226,7 @@ func rwcleanup(src_conn **pgx.Conn, dst_conn **pgx.Conn, task *MoveTask, state i
 		pg.QI(fmt.Sprintf("%s_%d", task.table_name, task.pnum))))
 	if err != nil {
 		rwlog(id, *task, "cleanup: drop table failed: %v", err)
+		report_err = err
 	}
 
 CLOSE_CONNS:
@@ -220,12 +238,13 @@ CLOSE_CONNS:
 	if *dst_conn != nil {
 		(*dst_conn).Close()
 	}
+	return report_err
 }
 
-// when shutdown chan is closed, we must exit asap
-// when part is moved, we ask main goroutine to commit the change through out
-// chan; he responds to us via commit chan -- true if successfully put.
-func movePartWorkerMain(in <-chan MoveTask, commit <-chan bool, shutdown chan struct{}, out chan<- interface{}, myid int) {
+// The communication is simple: worker starts with task, completes it, sends
+// report and receives from main worker another one. One exception:
+// when in chan is closed (no deadlock risks), worker must exit asap.
+func movePartWorkerMain(in <-chan MoveTask, out chan<- report, myid int) {
 	var state = movePartWorkerIdle
 	var src_conn *pgx.Conn = nil
 	var dst_conn *pgx.Conn = nil
@@ -236,14 +255,19 @@ func movePartWorkerMain(in <-chan MoveTask, commit <-chan bool, shutdown chan st
 	for {
 		select {
 		case task, ok = <-in:
+			if !ok {
+				// done, no more tasks, or request to shut down
+				if state != movePartWorkerIdle {
+					err := rwcleanup(&src_conn, &dst_conn, &task, state, myid)
+					out <- report{err: err, id: myid}
+				}
+				break
+			}
+
 			if state != movePartWorkerIdle {
 				panic("new task came while not idle")
 			}
-			if !ok { // done, no more tasks
-				break
-			}
-			log.Printf("Worker %d: got new task: table %s, pnum %d %d->%d",
-				myid, task.table_name, task.pnum, task.src_rgid, task.dst_rgid)
+			rwlog(myid, task, "got new task")
 			var connconfig pgx.ConnConfig
 			connconfig, err := pgx.ParseConnectionString(task.src_connstr)
 			if err != nil {
@@ -266,6 +290,19 @@ func movePartWorkerMain(in <-chan MoveTask, commit <-chan bool, shutdown chan st
 				goto ERR
 			}
 			state = movePartWorkerConnsEstablished
+			/* must not broadcast anything */
+			_, err = dst_conn.Exec("set session hodgepodge.broadcast_utility to off")
+			if err != nil {
+				rwlog(myid, task, "failed to turn off broadcast_utility: %v", err)
+				goto ERR
+			}
+			_, err = src_conn.Exec("set session hodgepodge.broadcast_utility to off")
+			if err != nil {
+				rwlog(myid, task, "failed to turn off broadcast_utility: %v", err)
+				goto ERR
+			}
+
+			/* xxx creating indexes afterwards? */
 			_, err = dst_conn.Exec(fmt.Sprintf("create table %s (like %s including all)",
 				pg.QI(fmt.Sprintf("%s_%d", task.table_name, task.pnum)),
 				pg.QI(task.table_name)))
@@ -293,29 +330,6 @@ func movePartWorkerMain(in <-chan MoveTask, commit <-chan bool, shutdown chan st
 			err = nil
 			rwcleanup(&src_conn, &dst_conn, &task, state, myid)
 			state = movePartWorkerIdle
-
-		case <-shutdown: // shutdown request
-			// If main waits from us, push the report and exit;
-			// otherwise he won't know when we are finished.
-			// If we wait from main, then just exit right away: main
-			// won't send us anything after getting shutdown;
-			// commitRequest is assumed failed in this case.
-			// We could close 'in' channel instead of using separate
-			// chan, but this lets spread logic a bit.
-			// Note that here we rely on the fact that 'in' channel is
-			// unbuffered; the following is impossible:
-			// -- worker sends commitRequest
-			// -- main commits and puts commit to 'in' chan
-			// -- main gots shutdown and notifies all workers
-			// -- worker gets shutdown before commit ack and aborts
-			// XXX in this schema we have no way of telling main that
-			// rollback failed
-			if !(state == movePartWorkerWaitCommit || state == movePartWorkerIdle) {
-				// main waits from us
-				out <- report{err: nil, id: myid}
-			}
-			rwcleanup(&src_conn, &dst_conn, &task, state, myid)
-			break
 
 		case <-time.After(2 * time.Second):
 			var err error
@@ -382,12 +396,20 @@ func movePartWorkerMain(in <-chan MoveTask, commit <-chan bool, shutdown chan st
 					rwlog(myid, task, "%v", err)
 					goto ERRTMT
 				}
-				// but before dropping source table, we must
 				// commit metadata update to the store:
 				// otherwise we might crash and lost partition.
-				// So signal that we want commit
-				out <- commitRequest{task: task, id: myid}
-				state = movePartWorkerWaitCommit
+				// src partition is also dropped here
+				state = movePartWorkerCommitting
+				_, err = dst_conn.Exec(fmt.Sprintf("select hodgepodge.part_moved(%s::regclass, %d, %d, %d);",
+					pg.QL(pg.QI(task.table_name)), task.pnum, task.src_rgid, task.dst_rgid))
+				if err != nil {
+					rwlog(myid, task, "failed to commit partmove: %v", err)
+					goto ERRTMT
+				}
+
+				/* done */
+				out <- report{err: nil, id: myid}
+				state = movePartWorkerIdle
 				continue
 			}
 			// movePartWorkerIdle or movePartWorkerWaitCommit,
@@ -399,42 +421,6 @@ func movePartWorkerMain(in <-chan MoveTask, commit <-chan bool, shutdown chan st
 			err = nil
 			rwcleanup(&src_conn, &dst_conn, &task, state, myid)
 			state = movePartWorkerIdle
-
-		case ok := <-commit:
-			var err error
-			if state != movePartWorkerWaitCommit {
-				panic("commit came while not in movePartWorkerWaitCommit")
-			}
-
-			if ok {
-				// Now we can drop source part
-				_, err = src_conn.Exec(fmt.Sprintf("drop table %s",
-					pg.QI(fmt.Sprintf("%s_%d", task.table_name, task.pnum))))
-				if err != nil {
-					rwlog(myid, task, "failed to drop src part: %v", err)
-				}
-			} else {
-				// commit to the store failed; unlock the source
-				// and drop the dest
-				_, err = src_conn.Exec(fmt.Sprintf("select hodgepodge.write_protection_off(%s::regclass)",
-					pg.QL(fmt.Sprintf("%s_%d", task.table_name, task.pnum))))
-				if err != nil {
-					rwlog(myid, task, "write_protection_off failed: %v", err)
-					goto CMTDONE
-				}
-
-				_, err = dst_conn.Exec(fmt.Sprintf("drop table %s",
-					pg.QI(fmt.Sprintf("%s_%d", task.table_name, task.pnum))))
-				if err != nil {
-					rwlog(myid, task, "failed to drop dst part: %v", err)
-				}
-			}
-		CMTDONE:
-			out <- report{err: err, id: myid}
-			err = nil
-			state = movePartWorkerIdle
-			src_conn.Close()
-			dst_conn.Close()
 		}
 	}
 }
@@ -467,14 +453,13 @@ func Rebalance(cs store.ClusterStore, p int, tasks []MoveTask) bool {
 
 	var nworkers = min(p, len(tasks))
 	var chans = make(map[int]*movePartWorkerChans)
-	var reportch = make(chan interface{})
-	var shutdownch = make(chan struct{})
+	var reportch = make(chan report)
 	var active_workers = nworkers
 	for i := 0; i < nworkers; i++ {
 		chans[i] = new(movePartWorkerChans)
 		chans[i].in = make(chan MoveTask)
 		chans[i].commit = make(chan bool)
-		go movePartWorkerMain(chans[i].in, chans[i].commit, shutdownch, reportch, i)
+		go movePartWorkerMain(chans[i].in, reportch, i)
 		chans[i].in <- tasks[len(tasks)-1] // push first task
 		tasks = tasks[:len(tasks)-1]
 	}
@@ -485,74 +470,41 @@ func Rebalance(cs store.ClusterStore, p int, tasks []MoveTask) bool {
 	// We must continue looping until we get reports from all workers even
 	// after we get shutdown signal because some of them might be hanging
 	// in sending something to us
-MainLoop:
 	for active_workers != 0 {
 		select {
-		case msg := <-reportch:
-			switch msg := msg.(type) {
-			case report:
-				if msg.err != nil {
-					ok = false
-				}
-				if stopped {
-					active_workers--
-					continue
-				}
-				if len(tasks) != 0 { // push next task
-					chans[msg.id].in <- tasks[len(tasks)-1]
-					tasks = tasks[:len(tasks)-1]
-				} else { // or shut down worker
-					close(chans[msg.id].in)
-					active_workers--
-				}
-			case commitRequest:
-				if stopped {
-					active_workers--
-					continue
-				}
-				tables, _, err := cs.GetTables(context.TODO())
-				if err != nil {
-					log.Printf("Failed to get tables from the store: %v", err)
-					chans[msg.id].commit <- false
-					continue
-				}
-
-				for _, table := range tables {
-					if table.Relname == msg.task.table_name {
-						if table.Partmap[msg.task.pnum] != msg.task.src_rgid {
-							log.Printf("According to the store, moved part %s of table %s was on rg %d, not on %d",
-								msg.task.pnum, table.Relname, table.Partmap[msg.task.pnum], msg.task.src_rgid)
-							chans[msg.id].commit <- false
-							continue MainLoop
-						}
-						table.Partmap[msg.task.pnum] = msg.task.dst_rgid
-						err = cs.PutTables(context.TODO(), tables)
-						if err != nil {
-							log.Printf("failed to save tables data in store: %v", err)
-							// FIXME: there's a gigantic hole here. If we actually *succeeded* in committing
-							// update, but failed to get confirmation, worker would drop src partition, effectively
-							// losing it.
-							chans[msg.id].commit <- false
-							continue MainLoop
-						}
-						log.Printf("Committed part %d move of table %s from %d to %d",
-							msg.task.pnum, table.Relname, msg.task.src_rgid, msg.task.dst_rgid)
-						chans[msg.id].commit <- true
-						continue MainLoop
+		case report := <-reportch:
+			if report.err != nil {
+				ok = false
+				// not much sense to continue after any error
+				if !stopped {
+					for i := 0; i < nworkers; i++ {
+						close(chans[i].in)
 					}
+					stopped = true
 				}
-				log.Printf("Table %v with moved part not found in the store", msg.task.table_name)
-				chans[msg.id].commit <- false
+			}
+			if stopped {
+				active_workers--
+				continue
+			}
+			if len(tasks) != 0 { // push next task
+				chans[report.id].in <- tasks[len(tasks)-1]
+				tasks = tasks[:len(tasks)-1]
+			} else { // or shut down worker
+				close(chans[report.id].in)
+				active_workers--
 			}
 
 		case _ = <-sigs: // stop all workers immediately
 			log.Printf("Stopping all workers")
 			for i := 0; i < nworkers; i++ {
-				close(shutdownch)
+				close(chans[i].in)
 			}
 			stopped = true
 		}
 	}
-
+	if !ok {
+		log.Printf("rebalance failed; please run 'select hodgepodge.rebalance_cleanup();' to ensure there is no orphane subs/pubs/slots/partitions")
+	}
 	return ok
 }

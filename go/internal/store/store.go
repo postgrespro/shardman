@@ -28,8 +28,6 @@ type ClusterStore interface {
 	PutClusterData(ctx context.Context, cldata *cluster.ClusterData) error
 	GetRepGroups(ctx context.Context) (map[int]*cluster.RepGroup, *KVPair, error)
 	PutRepGroups(ctx context.Context, rgs map[int]*cluster.RepGroup) error
-	GetTables(ctx context.Context) ([]cluster.Table, *KVPair, error)
-	PutTables(ctx context.Context, tables []cluster.Table) error
 	UpdateStolonSpec(ctx context.Context, spec *cluster.StolonSpec, patch bool) error
 	Close() error
 }
@@ -105,32 +103,6 @@ func (cs *clusterStoreImpl) PutRepGroups(ctx context.Context, rgs map[int]*clust
 	}
 	path := filepath.Join(cs.storePath, "repgroups")
 	return cs.store.Put(ctx, path, rgsj)
-}
-
-func (cs *clusterStoreImpl) GetTables(ctx context.Context) ([]cluster.Table, *KVPair, error) {
-	var tables []cluster.Table
-	path := filepath.Join(cs.storePath, "tables")
-	pair, err := cs.store.Get(ctx, path)
-	if err != nil {
-		return nil, nil, err
-	}
-	if pair == nil {
-		return nil, nil, nil
-	}
-	if err := json.Unmarshal(pair.Value, &tables); err != nil {
-		return nil, nil, err
-	}
-	return tables, pair, nil
-}
-
-// Save info about sharded tables
-func (cs *clusterStoreImpl) PutTables(ctx context.Context, tables []cluster.Table) error {
-	tablesj, err := json.Marshal(tables)
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(cs.storePath, "tables")
-	return cs.store.Put(ctx, path, tablesj)
 }
 
 // Save current masters for each repgroup

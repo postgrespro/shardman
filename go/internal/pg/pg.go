@@ -393,3 +393,84 @@ func FSI(rgid int) string {
 func FSL(rgid int) string {
 	return fmt.Sprintf("'hp_rg_%d'", rgid)
 }
+
+// Tables are not actually stored in the store
+func GetTables(cs store.ClusterStore, ctx context.Context) ([]cluster.Table, error) {
+	var tables []cluster.Table
+
+	cldata, _, err := cs.GetClusterData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rgs, _, err := cs.GetRepGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var connstr string
+	if len(rgs) == 0 {
+		return nil, fmt.Errorf("can't get tables, no repgroups in cluster")
+	}
+	for _, rg := range rgs {
+		connstr, err = GetSuConnstr(ctx, rg, cldata)
+		if err != nil {
+			return nil, err
+		}
+		break
+	}
+
+	connconfig, err := pgx.ParseConnectionString(connstr)
+	conn, err := pgx.Connect(connconfig)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to connect to database: %v", err)
+	}
+	defer conn.Close()
+
+	rows, err := conn.Query(
+		`select n.nspname, c.relname, nparts, cn.nspname colocated_nspname, cc.relname colocated_relname from hodgepodge.sharded_tables s join pg_class c on (s.rel = c.oid) join
+pg_namespace n on (c.relnamespace = n.oid) left outer join
+pg_class cc on (cc.oid = s.colocated_with) left outer join
+pg_namespace cn on (cn.oid = cc.relnamespace);`)
+	if err != nil {
+		return nil, err
+	}
+
+	for rows.Next() {
+		var t cluster.Table
+		var colocateWithSchema *string
+		var colocateWithRelname *string
+		err = rows.Scan(&t.Schema, &t.Relname, &t.Nparts, &colocateWithSchema, &colocateWithRelname)
+		if colocateWithSchema != nil {
+			t.ColocateWithSchema = *colocateWithSchema
+			t.ColocateWithRelname = *colocateWithRelname
+		}
+		if err != nil {
+			return nil, err
+		}
+		t.Partmap = make([]int, t.Nparts)
+		tables = append(tables, t)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	// fill partmaps
+	for i, t := range tables {
+		rows, err := conn.Query(fmt.Sprintf("select pnum, rgid from hodgepodge.parts where rel = %s::regclass",
+			QL(fmt.Sprintf("%s.%s", QI(t.Schema), QI(t.Relname)))))
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var pnum, rgid int
+			err = rows.Scan(&pnum, &rgid)
+			if err != nil {
+				return nil, err
+			}
+			tables[i].Partmap[pnum] = rgid
+		}
+		if rows.Err() != nil {
+			return nil, rows.Err()
+		}
+	}
+	return tables, nil
+}

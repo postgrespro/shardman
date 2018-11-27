@@ -370,7 +370,6 @@ func monWorkerFull(w *monWorker) {
 				w.log("failed to set new fs opts: %v", err)
 				goto ConnError
 			}
-
 		}
 	}
 

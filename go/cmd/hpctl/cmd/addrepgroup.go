@@ -3,8 +3,10 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -61,21 +63,22 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		die("cluster %v not found", cfg.ClusterName)
 	}
 
-	connstr, err := pg.GetSuConnstr(context.TODO(), &newrg, cldata)
+	newconnstr, err := pg.GetSuConnstr(context.TODO(), &newrg, cldata)
 	if err != nil {
 		die("Couldn't get connstr: %v", err)
 	}
 
-	connconfig, err := pgx.ParseConnectionString(connstr)
+	newconnconfig, err := pgx.ParseConnectionString(newconnstr)
 	if err != nil {
-		die("connstring parsing \"%s\" failed: %v", connstr, err) // should not happen
+		die("connstring parsing \"%s\" failed: %v", newconnstr, err) // should not happen
 	}
-	conn, err := pgx.Connect(connconfig)
+	conn, err := pgx.Connect(newconnconfig)
 	if err != nil {
 		die("Unable to connect to database: %v", err)
 	}
 	defer conn.Close()
 
+	// actually makes sense only for the first rg: dump/restore will recreate it anyway
 	_, err = conn.Exec("drop extension if exists hodgepodge cascade")
 	if err != nil {
 		die("Unable to drop ext: %v", err)
@@ -88,6 +91,7 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	if err != nil {
 		die("Failed to retrieve sysid: %v", err)
 	}
+	conn.Close() // safe to close multiple times
 
 	rgs, _, err := cs.GetRepGroups(context.TODO())
 	if err != nil {
@@ -103,7 +107,6 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		}
 	}
 	newrgid++
-	rgs[newrgid] = &newrg
 
 	err = store.StolonUpdate(&newrg, newrgid, true, cldata.StolonSpec)
 	if err != nil {
@@ -116,7 +119,7 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	for {
 		stderr("Waiting for config apply...")
 		var max_prepared_transactions int
-		update_conf_conn, err := pgx.Connect(connconfig)
+		update_conf_conn, err := pgx.Connect(newconnconfig)
 		if err != nil {
 			// system is shutting down
 			if strings.Contains(err.Error(), "SQLSTATE 57P03") {
@@ -145,6 +148,64 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		update_conf_conn.Close()
 	}
 
+	// do the terrible: pg_dump from random existing rg (if any), restore to new
+	for _, rg := range rgs {
+		existing_connstr, err := pg.GetSuConnstr(context.TODO(), rg, cldata)
+		if err != nil {
+			die("failed to get connstr: %v", err)
+		}
+		dump_cmd := exec.Command("pg_dumpall", "--dbname", existing_connstr, "--clean", "--schema-only", "--if-exists")
+		dump, err := dump_cmd.Output()
+		if err != nil {
+			exiterr := err.(*exec.ExitError)
+			die("pg_dumpall failed: %v, stderr: %v", exiterr, string(exiterr.Stderr[:]))
+		}
+		// pg_dump won't copy data from extension tables, do that instead of him...
+		rgs_dump_cmd := exec.Command("psql", "--dbname", existing_connstr, "-c", "copy hodgepodge.repgroups to stdout")
+		rgs_dump, err := rgs_dump_cmd.Output()
+		if err != nil {
+			die("pg_dump failed: %v", err)
+		}
+		tables_dump_cmd := exec.Command("psql", "--dbname", existing_connstr, "-c", "copy hodgepodge.sharded_tables to stdout")
+		tables_dump, err := tables_dump_cmd.Output()
+		if err != nil {
+			die("pg_dump failed: %v", err)
+		}
+		parts_dump_cmd := exec.Command("psql", "--dbname", existing_connstr, "-c", "copy hodgepodge.parts to stdout")
+		parts_dump, err := parts_dump_cmd.Output()
+		if err != nil {
+			die("pg_dump failed: %v", err)
+		}
+
+		restore_cmd := exec.Command("psql", "--dbname", newconnstr)
+		restore_cmd.Stdin = bytes.NewReader(dump)
+		out, err := restore_cmd.CombinedOutput()
+		if err != nil {
+			die("psql dump restore failed: %v; stderr/out is %v", err, string(out[:]))
+		}
+		rgs_restore_cmd := exec.Command("psql", "--dbname", newconnstr, "-c", "copy hodgepodge.repgroups from stdin")
+		rgs_restore_cmd.Stdin = bytes.NewReader(rgs_dump)
+		out, err = rgs_restore_cmd.CombinedOutput()
+		if err != nil {
+			die("psql dump restore failed: %v; stderr/out is %v", err, string(out[:]))
+		}
+		tables_restore_cmd := exec.Command("psql", "--dbname", newconnstr, "-c", "copy hodgepodge.sharded_tables from stdin")
+		tables_restore_cmd.Stdin = bytes.NewReader(tables_dump)
+		out, err = tables_restore_cmd.CombinedOutput()
+		if err != nil {
+			die("psql dump restore failed: %v; stderr/out is %v", err, string(out[:]))
+		}
+		parts_restore_cmd := exec.Command("psql", "--dbname", newconnstr, "-c", "copy hodgepodge.parts from stdin")
+		parts_restore_cmd.Stdin = bytes.NewReader(parts_dump)
+		out, err = parts_restore_cmd.CombinedOutput()
+		if err != nil {
+			die("psql dump restore failed: %v; stderr/out is %v", err, string(out[:]))
+		}
+
+		break
+	}
+
+	rgs[newrgid] = &newrg
 	bcst, err := pg.NewBroadcaster(rgs, cldata)
 	if err != nil {
 		die("Failed to create broadcaster: %v", err)
@@ -156,13 +217,15 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	bcst.PushAll("lock hodgepodge.repgroups in access exclusive mode")
 	// create foreign servers to all rgs at newrg and vice versa
 	newrgconnstrmap, err := store.GetSuConnstrMap(context.TODO(), &newrg, cldata)
-	newrgumopts, _ := pg.FormUserMappingOpts(newrgconnstrmap)
-	newrgfsopts, _ := pg.FormForeignServerOpts(newrgconnstrmap)
 	if err != nil {
 		die("Failed to get new rg connstr")
 	}
+	newrgumopts, _ := pg.FormUserMappingOpts(newrgconnstrmap)
+	newrgfsopts, _ := pg.FormForeignServerOpts(newrgconnstrmap)
 	// insert myself
 	bcst.Push(newrgid, fmt.Sprintf("insert into hodgepodge.repgroups values (%d, null)", newrgid))
+	// restamp oids
+	bcst.Push(newrgid, "select hodgepodge.restamp_oids()")
 	for rgid, rg := range rgs {
 		if rgid == newrgid {
 			continue
@@ -175,8 +238,8 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		rgfsopts, _ := pg.FormForeignServerOpts(rgconnstrmap)
 		bcst.Push(newrgid, fmt.Sprintf("drop server if exists %s cascade", pg.FSI(rgid)))
 		bcst.Push(newrgid, fmt.Sprintf("create server %s foreign data wrapper hodgepodge_postgres_fdw %s", pg.FSI(rgid), rgfsopts))
-		bcst.Push(newrgid, fmt.Sprintf("insert into hodgepodge.repgroups values (%d, (select oid from pg_foreign_server where srvname = %s))",
-			rgid, pg.FSL(rgid)))
+		bcst.Push(newrgid, fmt.Sprintf("update hodgepodge.repgroups set srvid = (select oid from pg_foreign_server where srvname = %s) where id = %d",
+			pg.FSL(rgid), rgid))
 		bcst.Push(rgid, fmt.Sprintf("drop server if exists %s cascade", pg.FSI(newrgid)))
 		bcst.Push(rgid, fmt.Sprintf("create server %s foreign data wrapper hodgepodge_postgres_fdw %s", pg.FSI(newrgid), newrgfsopts))
 		bcst.Push(rgid, fmt.Sprintf("insert into hodgepodge.repgroups values (%d, (select oid from pg_foreign_server where srvname = %s))",
@@ -187,25 +250,7 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 		bcst.Push(rgid, fmt.Sprintf("drop user mapping if exists for current_user server %s", pg.FSI(newrgid)))
 		bcst.Push(rgid, fmt.Sprintf("create user mapping for current_user server %s %s", pg.FSI(newrgid), newrgumopts))
 	}
-	// TODO: pgdump
-	// tables, _, err := cs.GetTables(context.TODO())
-	// if err != nil {
-	// 	die("Failed to get tables from store: %v", err)
-	// }
-	// for _, table := range tables {
-	// 	bcst.Push(newrgid, fmt.Sprintf("drop table if exists %s cascade",
-	// 		pg.QI(table.Relname)))
-	// 	bcst.Push(newrgid, table.Sql)
-	// 	for pnum := 0; pnum < table.Nparts; pnum++ {
-	// 		bcst.Push(newrgid, fmt.Sprintf("create foreign table %s partition of %s for values with (modulus %d, remainder %d) server hp_rg_%d options (table_name %s)",
-	// 			pg.QI(fmt.Sprintf("%s_%d_fdw", table.Relname, pnum)),
-	// 			pg.QI(table.Relname),
-	// 			table.Nparts,
-	// 			pnum,
-	// 			table.Partmap[pnum],
-	// 			pg.QL(fmt.Sprintf("%s_%d", table.Relname, pnum))))
-	// 	}
-	// }
+	bcst.Push(newrgid, "select hodgepodge.restore_foreign_tables()")
 	_, err = bcst.Commit(true)
 	if err != nil {
 		die("bcst failed: %v", err)

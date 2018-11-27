@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx"
 	"github.com/spf13/cobra"
 
 	cmdcommon "postgrespro.ru/hodgepodge/cmd"
@@ -61,12 +62,12 @@ func rmRepGroup(cmd *cobra.Command, args []string) {
 		die("There is no replication group named %s in the cluster", rmrgname)
 	}
 
-	tables, _, err := cs.GetTables(context.TODO())
+	tables, err := pg.GetTables(cs, context.TODO())
 	if err != nil {
-		die("Failed to get tables from the store: %v", err)
+		die("Failed to retrieve tables: %v", err)
 	}
 	if len(tables) != 0 && len(rgs) <= 1 {
-		die("Can't the last replication group with existing sharded tables")
+		die("Can't remove the last replication group with existing sharded tables")
 	}
 	var movetasks = free_rg_tasks(rmrgid, tables, rgs)
 	if len(movetasks) != 0 {
@@ -77,27 +78,31 @@ func rmRepGroup(cmd *cobra.Command, args []string) {
 	}
 
 	delete(rgs, rmrgid) // rmrg might be unaccessible, don't touch it
+	// if there is someone left, purge removed rg from them
+	for _, rg := range rgs {
+		connstr, err := pg.GetSuConnstr(context.TODO(), rg, cldata)
+		if err != nil {
+			die("failed to get connstr of one of left rgs: %v", err)
+		}
+		connconfig, err := pgx.ParseConnectionString(connstr)
+		conn, err := pgx.Connect(connconfig)
+		if err != nil {
+			die("Unable to connect to database: %v", err)
+		}
+		defer conn.Close()
+
+		_, err = conn.Exec(fmt.Sprintf("select hodgepodge.rmrepgroup(%d)", rmrgid))
+		if err != nil {
+			die("failed to remove rg from others: %v", err)
+		}
+		break
+	}
+
 	err = cs.PutRepGroups(context.TODO(), rgs)
 	if err != nil {
-		die("failed to save repgroup data in store: %v", err)
+		die("failed to save repgroup data in store: %v\n  Note that rg was already removed from other rgs", err)
 	}
 	stdout("Successfully deleted repgroup %s from the store", rmrgname)
-
-	// try purge foreign servers from the rest of rgs
-	bcst, err := pg.NewBroadcaster(rgs, cldata)
-	if err != nil {
-		die("Failed to create broadcaster: %v", err)
-	}
-	defer bcst.Close()
-
-	bcst.Begin()
-	for rgid, _ := range rgs {
-		bcst.Push(rgid, fmt.Sprintf("drop server if exists hp_rg_%d cascade", rmrgid))
-	}
-	_, err = bcst.Commit(true)
-	if err != nil {
-		die("bcst failed: %v", err)
-	}
 }
 
 // build tasks to move all partitions from given repgroup
@@ -114,7 +119,7 @@ func free_rg_tasks(frgid int, tables []cluster.Table, rgs map[int]*cluster.RepGr
 	}
 	var dst_rg_idx = 0
 	for _, table := range tables {
-		if table.ColocateWith != "" {
+		if table.ColocateWithSchema != "" {
 			continue // colocated tables follow their references
 		}
 		for pnum := 0; pnum < table.Nparts; pnum++ {
@@ -122,15 +127,18 @@ func free_rg_tasks(frgid int, tables []cluster.Table, rgs map[int]*cluster.RepGr
 				tasks = append(tasks, MoveTask{
 					src_rgid:   frgid,
 					dst_rgid:   rgids[dst_rg_idx],
+					schema:     table.Schema,
 					table_name: table.Relname,
 					pnum:       pnum,
 				})
 			}
 			for _, ctable := range tables {
-				if ctable.ColocateWith == table.Relname {
+				if ctable.ColocateWithSchema == table.Relname &&
+					ctable.ColocateWithRelname == table.Relname {
 					tasks = append(tasks, MoveTask{
 						src_rgid:   ctable.Partmap[pnum],
 						dst_rgid:   rgids[dst_rg_idx],
+						schema:     ctable.Schema,
 						table_name: ctable.Relname,
 						pnum:       pnum,
 					})

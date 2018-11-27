@@ -26,11 +26,10 @@
 #define Anum_sharded_tables_nparts			2
 #define Anum_sharded_tables_colocated_with	3
 
-#define Natts_parts							4
+#define Natts_parts							3
 #define Anum_parts_rel						1
 #define Anum_parts_pnum						2
-#define Anum_parts_part_name				3
-#define Anum_parts_rgid						4
+#define Anum_parts_rgid						3
 
 static Oid HpNamespaceOid(void);
 static Oid RepgroupsIndexOid(void);

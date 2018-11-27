@@ -21,9 +21,15 @@
 #if DEBUG_LEVEL == 0
 #define hp_log1(fmt, ...) elog(LOG, HP_TAG fmt, MyRgid, ## __VA_ARGS__)
 #define hp_log2(fmt, ...)
+#define hp_log3(fmt, ...)
 #elif DEBUG_LEVEL == 1
 #define hp_log1(fmt, ...) elog(LOG, HP_TAG fmt, MyRgid, ## __VA_ARGS__)
 #define hp_log2(fmt, ...) elog(LOG, HP_TAG fmt, MyRgid, ## __VA_ARGS__)
+#define hp_log3(fmt, ...)
+#elif DEBUG_LEVEL == 2
+#define hp_log1(fmt, ...) elog(LOG, HP_TAG fmt, MyRgid, ## __VA_ARGS__)
+#define hp_log2(fmt, ...) elog(LOG, HP_TAG fmt, MyRgid, ## __VA_ARGS__)
+#define hp_log3(fmt, ...) elog(LOG, HP_TAG fmt, MyRgid, ## __VA_ARGS__)
 #endif
 
 extern int MyRgid;
