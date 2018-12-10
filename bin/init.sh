@@ -17,12 +17,15 @@ make
 pkill stolon-keeper || true
 pkill stolon-sentinel || true
 pkill -9 postgres || true
-pkill etcd || true
 
+# pkill etcd || true
+
+systemctl --user stop etcd.service
 rm -rf "${etcd_datadir}"
-nohup etcd --auto-compaction-retention=1 --data-dir "${etcd_datadir}" >/tmp/etcd.log 2>&1 &
+systemctl --user start etcd.service
+# nohup etcd --auto-compaction-retention=1 --data-dir "${etcd_datadir}" >/tmp/etcd.log 2>&1 &
 # let etcd start
-sleep 5
+# sleep 5
 
 i=0
 for cluster in $(seq 1 $clusters); do

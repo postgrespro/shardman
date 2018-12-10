@@ -3,7 +3,7 @@
 package main
 
 import (
-	"postgrespro.ru/hodgepodge/cmd/hpmon/cmd"
+	"postgrespro.ru/hodgepodge/cmd/monitor/cmd"
 )
 
 // Wow, really useful stuff here

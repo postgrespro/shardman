@@ -16,8 +16,8 @@ var cfg cmdcommon.CommonConfig
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "hpctl",
-	Short: "hodgepodge command line client. Note: you must always run at most one instance of hpctl at time.",
+	Use:   "hodgepodgectl",
+	Short: "hodgepodge command line client. Note: you must always run at most one instance of hodgepodgectl at time.",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
 		if err := cmdcommon.CheckConfig(&cfg); err != nil {
 			die(err.Error())
@@ -39,7 +39,7 @@ var cmdVersion = &cobra.Command{
 	Use:   "version",
 	Short: "Display the version",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("hpctl v0.0.1")
+		fmt.Println("hodgepodgectl v0.0.1")
 	},
 }
 

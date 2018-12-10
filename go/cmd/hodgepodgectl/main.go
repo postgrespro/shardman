@@ -3,7 +3,7 @@
 package main
 
 import (
-	"postgrespro.ru/hodgepodge/cmd/hpctl/cmd"
+	"postgrespro.ru/hodgepodge/cmd/hodgepodgectl/cmd"
 )
 
 // Wow, really useful stuff here
