@@ -20,6 +20,7 @@ type ClusterSpec struct {
 	PgReplAuthMethod string
 	PgReplPassword   string
 	PgReplUsername   string
+	UseProxy         bool
 	StolonSpec       StolonSpec
 }
 

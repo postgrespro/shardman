@@ -315,9 +315,11 @@ func (ls *LadleStore) AddNodes(ctx context.Context, nodes []string) error {
 				// make master actually master and put proxy on it
 				if node == master {
 					keeper.Preferred = true
-					ldata.Layout[node].Proxy = &Proxy{
-						RepGroup: rgName,
-						Port:     ldata.Spec.ProxyPort,
+					if cldata.Spec.UseProxy {
+						ldata.Layout[node].Proxy = &Proxy{
+							RepGroup: rgName,
+							Port:     ldata.Spec.ProxyPort,
+						}
 					}
 				}
 				// push the keeper

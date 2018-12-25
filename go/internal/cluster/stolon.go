@@ -84,14 +84,14 @@ type ProxySpec struct {
 }
 
 // Master connection info
-type Master struct {
-	ListenAddress string
-	Port          string
+type Endpoint struct {
+	Address string
+	Port    string
 }
 
 // if no master available (but store is ok), returns nil, nil
-func (ss *StolonStore) GetMaster(ctx context.Context) (*Master, error) {
-	var master = &Master{}
+func (ss *StolonStore) GetMaster(ctx context.Context) (*Endpoint, error) {
+	var master = &Endpoint{}
 	var clusterData StolonClusterData
 
 	path := filepath.Join(ss.storePath, "clusterdata")
@@ -106,12 +106,17 @@ func (ss *StolonStore) GetMaster(ctx context.Context) (*Master, error) {
 		return nil, err
 	}
 	if db, ok := clusterData.DBs[clusterData.Proxy.Spec.MasterDBUID]; ok {
-		master.ListenAddress = db.Status.ListenAddress
+		master.Address = db.Status.ListenAddress
 		master.Port = db.Status.Port
 		return master, nil
 	} else {
 		return nil, nil
 	}
+}
+
+// if no proxy available (but store is ok) returns nil, nil
+func (ss *StolonStore) GetProxy(ctx context.Context) (*Endpoint, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 func (ss *StolonStore) Close() error {

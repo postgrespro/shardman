@@ -122,14 +122,14 @@ func (cs *ClusterStore) PutRepGroups(ctx context.Context, rgs map[int]*RepGroup)
 }
 
 // Save current masters for each repgroup
-func (cs *ClusterStore) PutMasters(ctx context.Context, masters map[int]*Master) error {
-	mastersj, err := json.Marshal(masters)
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(cs.StorePath, "masters")
-	return cs.Store.Put(ctx, path, mastersj)
-}
+// func (cs *ClusterStore) PutMasters(ctx context.Context, masters map[int]*Master) error {
+// mastersj, err := json.Marshal(masters)
+// if err != nil {
+// return err
+// }
+// path := filepath.Join(cs.StorePath, "masters")
+// return cs.Store.Put(ctx, path, mastersj)
+// }
 
 func (cs *ClusterStore) Close() error {
 	return cs.Store.Close()
@@ -211,19 +211,25 @@ func (cs *ClusterStore) GetSuConnstrMap(ctx context.Context, rg *RepGroup, cldat
 		ss = NewStolonStoreFromExisting(rg, cs.Store)
 	}
 
-	master, err := ss.GetMaster(ctx)
+	var err error
+	var ep *Endpoint
+	if cldata.Spec.UseProxy {
+		ep, err = ss.GetProxy(ctx)
+	} else {
+		ep, err = ss.GetMaster(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if master == nil {
+	if ep == nil {
 		return nil, MasterUnavailableError{}
 	}
 
 	cp := map[string]string{
 		"user":   cldata.Spec.PgSuUsername,
 		"dbname": "postgres",
-		"host":   master.ListenAddress,
-		"port":   master.Port,
+		"host":   ep.Address,
+		"port":   ep.Port,
 	}
 	if cldata.Spec.PgSuAuthMethod != "trust" {
 		cp["password"] = cldata.Spec.PgSuPassword
