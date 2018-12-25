@@ -1,0 +1,94 @@
+---
+# deploy etcd
+
+- name: download etcd
+  get_url:
+    url: "{{ etcd_link }}"
+    dest: "{{ansible_env.HOME}}/etcd.tar.gz"
+  tags:
+    - etcd_provision
+
+- name: unarchive etcd
+  unarchive:
+    src: "{{ansible_env.HOME}}/etcd.tar.gz"
+    dest: "{{ansible_env.HOME}}"
+    copy: no
+  tags:
+    - etcd_provision
+
+- name: add etcd binaries to PATH in .bashrc
+  lineinfile:
+    path: "{{ ansible_env.HOME}}/.bashrc"
+    line: 'export PATH=$PATH:{{ ansible_env.HOME}}/{{ etcd_dirname }}/'
+    # important, otherwise not read in non-interactive sessions
+    insertbefore: BOF
+  tags:
+    - etcd_provision
+
+- name: set v3 api usage in .bashrc
+  lineinfile:
+    path: "{{ ansible_env.HOME }}/.bashrc"
+    line: 'export ETCDCTL_API=3'
+    # important, otherwise not read in non-interactive sessions
+    insertbefore: BOF
+  tags:
+    - etcd_provision
+
+- name: create ~/.config/systemd/user
+  file: path="{{ ansible_env.HOME }}/.config/systemd/user" state=directory
+  tags:
+    - etcd_service
+
+- name: instantiate env file
+  template:
+    src: etcd_env.j2
+    dest: "{{ etcd_envfile }}"
+  tags:
+    - etcd_service
+
+- name: instantiate etcd service file
+  template:
+    src: etcd.service.j2
+    dest: "{{ ansible_env.HOME }}/.config/systemd/user/etcd.service"
+  tags:
+    etcd_service
+
+- name: kill existing etcd -- we are going to purge the datadir and restart the service; restarting might fail if dir is removed under foot of running service
+  shell: pkill etcd || true
+  tags:
+    etcd_service
+
+- name: remove etcd datadir (useful if obsolete etcd is already running)
+  file: path="{{ etcd_datadir }}" state=absent
+  tags:
+    etcd_service
+
+- name: bla
+  command: systemctl --user daemon-reload
+  tags:
+    etcd_service
+
+- name: disable etcd service (as there is apparently no way to re-enable it)
+  systemd:
+    name: etcd
+    daemon_reload: yes
+    state: stopped
+    enabled: no
+    scope: user
+  tags:
+    etcd_service
+
+- name: enable systemd etcd service
+  systemd:
+    name: etcd
+    daemon_reload: yes
+    state: restarted
+    enabled: yes
+    scope: user
+  tags:
+    etcd_service
+
+# - debug: var={{ item }}
+#   with_dict: "{{hostvars}}"
+#   tags:
+#     etcd_dbg

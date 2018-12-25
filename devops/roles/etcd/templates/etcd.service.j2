@@ -1,0 +1,15 @@
+[Unit]
+Description=etcd key-value store
+Documentation=https://github.com/etcd-io/etcd
+
+[Service]
+Type=notify
+EnvironmentFile={{ etcd_envfile }}
+ExecStart={{ etcd_binpath }}/etcd
+Restart=always
+RestartSec=10s
+
+# start it on boot
+[Install]
+# note that multi-user.target doesn't exit in user systemd
+WantedBy=default.target

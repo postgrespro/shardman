@@ -1,0 +1,6 @@
+*.retry
+inventory_manual/manual
+
+# vagrant stuff
+*.log
+.vagrant/

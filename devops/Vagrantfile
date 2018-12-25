@@ -1,0 +1,44 @@
+# 2 is version of the conf object
+Vagrant.configure("2") do |config|
+  config.vm.define "node1" do |node|
+    node.vm.box = "ubuntu/xenial64"
+    node.vm.network "private_network", ip: "10.42.42.10"
+    node.vm.hostname = "vg1"
+  end
+
+  config.vm.define "node2" do |node|
+    node.vm.box = "ubuntu/xenial64"
+    node.vm.network "private_network", ip: "10.42.42.20"
+    node.vm.hostname = "vg2"
+  end
+
+  config.vm.define "node3" do |node|
+    node.vm.box = "ubuntu/xenial64"
+    node.vm.network "private_network", ip: "10.42.42.30"
+    node.vm.hostname = "vg3"
+  end
+
+  config.vm.define "node4" do |node|
+    node.vm.box = "ubuntu/xenial64"
+    node.vm.network "private_network", ip: "10.42.42.40"
+    node.vm.hostname = "vg4"
+  end
+
+  # ssh-copy-id
+  config.vm.provision "shell" do |s|
+    ssh_pub_key = File.readlines("#{Dir.home}/.ssh/id_rsa.pub").first.strip
+    s.inline = <<-SHELL
+      echo #{ssh_pub_key} >> /home/ubuntu/.ssh/authorized_keys
+      echo #{ssh_pub_key} >> /root/.ssh/authorized_keys
+    SHELL
+  end
+
+  config.vm.provision "shell" do |s|
+    s.inline = <<-SHELL
+      echo "10.42.42.10 vg1" >> /etc/hosts
+      echo "10.42.42.20 vg2" >> /etc/hosts
+      echo "10.42.42.30 vg3" >> /etc/hosts
+      echo "10.42.42.40 vg4" >> /etc/hosts
+    SHELL
+  end
+end

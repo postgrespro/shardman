@@ -1,0 +1,19 @@
+# unit instance name is $stolon_name
+# actually there should be only one proxy per node, so templating here is not necessary;
+# however, thus it clearer to which rg this proxy belongs
+[Unit]
+Description=stolon proxy
+Documentation=https://github.com/sorintlab/stolon/blob/master/doc/commands/stolon-proxy.md
+# we want to stop proxy when bowl is stopped
+PartOf=hodgepodge-bowl-{{ cluster_name }}.service
+
+[Service]
+Type=simple
+EnvironmentFile={{ data_dir }}/proxy-{{ cluster_name }}-%i.env
+ExecStart={{ stolon_src }}/bin/stolon-proxy
+Restart=always
+RestartSec=10s
+
+# start it when bowl is started (if this unit is enabled)
+[Install]
+WantedBy=hodgepodge-bowl-{{ cluster_name }}.service

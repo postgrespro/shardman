@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx"
 
 	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/store"
 )
 
 // Broadcaster
@@ -156,12 +155,12 @@ func broadcastConnMain(in <-chan interface{}, resch chan<- resT, reportch chan<-
 	}
 }
 
-func NewBroadcaster(rgs map[int]*cluster.RepGroup, cldata *cluster.ClusterData) (*Broadcaster, error) {
+func NewBroadcaster(cs *cluster.ClusterStore, rgs map[int]*cluster.RepGroup, cldata *cluster.ClusterData) (*Broadcaster, error) {
 	var bcst = Broadcaster{conns: map[int]*BroadcastConn{}}
 
 	// learn connstrs
 	for rgid, rg := range rgs {
-		connstr, err := GetSuConnstr(context.TODO(), rg, cldata)
+		connstr, err := GetSuConnstr(context.TODO(), cs, rg, cldata)
 		if err != nil {
 			return nil, err
 		}
@@ -279,10 +278,22 @@ func (bcst *Broadcaster) Close() {
 // Connstring stuff
 
 // get connstr of each repgroup
-func GetSuConnstrs(ctx context.Context, rgs map[int]*cluster.RepGroup, cldata *cluster.ClusterData) (map[int]string, error) {
+func GetSuConnstrs(ctx context.Context, cs *cluster.ClusterStore) (map[int]string, error) {
+	cldata, _, err := cs.GetClusterData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if cldata == nil {
+		return nil, fmt.Errorf("cluster data not found")
+	}
+	rgs, _, err := cs.GetRepGroups(context.TODO())
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get repgroups: %v", err)
+	}
+
 	var connstrs = make(map[int]string)
 	for rgid, rg := range rgs {
-		connstr, err := GetSuConnstr(ctx, rg, cldata)
+		connstr, err := GetSuConnstr(ctx, cs, rg, cldata)
 		if err != nil {
 			return nil, err
 		}
@@ -291,8 +302,8 @@ func GetSuConnstrs(ctx context.Context, rgs map[int]*cluster.RepGroup, cldata *c
 	return connstrs, nil
 }
 
-func GetSuConnstr(ctx context.Context, rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, error) {
-	cp, err := store.GetSuConnstrMap(ctx, rg, cldata)
+func GetSuConnstr(ctx context.Context, cs *cluster.ClusterStore, rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, error) {
+	cp, err := cs.GetSuConnstrMap(ctx, rg, cldata)
 	if err != nil {
 		return "", err
 	}
@@ -395,7 +406,7 @@ func FSL(rgid int) string {
 }
 
 // Tables are not actually stored in the store
-func GetTables(cs store.ClusterStore, ctx context.Context) ([]cluster.Table, error) {
+func GetTables(cs *cluster.ClusterStore, ctx context.Context) ([]cluster.Table, error) {
 	var tables []cluster.Table
 
 	cldata, _, err := cs.GetClusterData(ctx)
@@ -411,7 +422,7 @@ func GetTables(cs store.ClusterStore, ctx context.Context) ([]cluster.Table, err
 		return nil, fmt.Errorf("can't get tables, no repgroups in cluster")
 	}
 	for _, rg := range rgs {
-		connstr, err = GetSuConnstr(ctx, rg, cldata)
+		connstr, err = GetSuConnstr(ctx, cs, rg, cldata)
 		if err != nil {
 			return nil, err
 		}

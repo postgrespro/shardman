@@ -4,12 +4,10 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"io/ioutil"
 	"os"
 
 	"github.com/spf13/cobra"
-	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 )
 
@@ -42,7 +40,7 @@ func update(cmd *cobra.Command, args []string) {
 		die("cluster spec must be provided as direct argument or as file to read (--file/-f option), but not both")
 	}
 
-	data := []byte{}
+	var data []byte
 	if len(args) == 1 {
 		data = []byte(args[0])
 	} else {
@@ -60,17 +58,12 @@ func update(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	var spec cluster.StolonSpec
-	if err := json.Unmarshal(data, &spec); err != nil {
-		die("failed to unmarshal cluster spec: %v", err)
-	}
-
-	cs, err := cmdcommon.NewClusterStore(&cfg)
+	cs, err := cluster.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}
 	defer cs.Close()
-	err = cs.UpdateStolonSpec(context.TODO(), &spec, updateOpts.patch)
+	err = cs.UpdateStolonSpec(context.TODO(), &cfg.StoreConnInfo, data, updateOpts.patch)
 	if err != nil {
 		die("failed to update the spec: %v", err)
 	}

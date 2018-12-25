@@ -1,0 +1,5 @@
+---
+
+# looks like when running ad-hoc commands (ansible), ansible doesn't check out
+# group_vars in current directory, so put it here...
+ansible_python_interpreter: python3

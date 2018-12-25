@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx"
 	"github.com/spf13/cobra"
 
-	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/pg"
 )
@@ -32,7 +31,7 @@ func init() {
 }
 
 func rmRepGroup(cmd *cobra.Command, args []string) {
-	cs, err := cmdcommon.NewClusterStore(&cfg)
+	cs, err := cluster.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}
@@ -80,7 +79,7 @@ func rmRepGroup(cmd *cobra.Command, args []string) {
 	delete(rgs, rmrgid) // rmrg might be unaccessible, don't touch it
 	// if there is someone left, purge removed rg from them
 	for _, rg := range rgs {
-		connstr, err := pg.GetSuConnstr(context.TODO(), rg, cldata)
+		connstr, err := pg.GetSuConnstr(context.TODO(), cs, rg, cldata)
 		if err != nil {
 			die("failed to get connstr of one of left rgs: %v", err)
 		}

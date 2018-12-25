@@ -1,0 +1,49 @@
+---
+# download, build and install pg
+
+- name: create pg dir
+  file: path="{{ pg_prefix }}" state=directory
+  # tags:
+    # - always
+
+- name: clone postgres sources {{ pg_repo }}/{{ pg_version_tag }}
+  git: repo={{pg_repo}}
+    dest={{pg_src}}
+    version={{pg_version_tag}}
+    depth=1
+    accept_hostkey=True
+    force=yes
+  tags:
+    - build_pg
+
+- name: copy patch to avoid TRUNCATE in pgbench -I=g
+  copy:
+    src: pgbench_no_truncate.patch
+    dest: "{{ pg_src }}/pgbench_no_truncate.patch"
+  tags:
+    - build_pg
+    - pgbench_no_truncate_patch
+
+- name: apply patch to avoid TRUNCATE in pgbench -I=g
+  shell: patch -p1 < pgbench_no_truncate.patch
+  args:
+    chdir: "{{ pg_src }}"
+  tags:
+    - build_pg
+    - pgbench_no_truncate_patch
+
+- name: build and install pg
+  shell: ./configure --prefix={{pg_inst}} --enable-debug && make clean && make -j {{makejobs}} && make install
+  args:
+    chdir: "{{ pg_src }}"
+  tags:
+    - build_pg
+
+- name: add postgres binaries to PATH in .bashrc
+  lineinfile:
+    path: "{{ ansible_env.HOME}}/.bashrc"
+    line: 'export PATH=$PATH:{{ pg_inst }}//bin'
+    # important, otherwise not read in non-interactive sessions
+    insertbefore: BOF
+  tags:
+    - pgbin_path

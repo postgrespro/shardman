@@ -1,0 +1,21 @@
+*** a/src/bin/pgbench/pgbench.c
+--- b/src/bin/pgbench/pgbench.c
+*************** initGenerateData(PGconn *con)
+*** 3589,3604 ****
+  	executeStatement(con, "begin");
+  
+  	/*
+- 	 * truncate away any old data, in one command in case there are foreign
+- 	 * keys
+- 	 */
+- 	executeStatement(con, "truncate table "
+- 					 "pgbench_accounts, "
+- 					 "pgbench_branches, "
+- 					 "pgbench_history, "
+- 					 "pgbench_tellers");
+- 
+- 	/*
+  	 * fill branches, tellers, accounts in that order in case foreign keys
+  	 * already exist
+  	 */
+--- 3589,3594 ----

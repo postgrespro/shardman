@@ -1,0 +1,41 @@
+---
+
+- name: clone repo with Arseny's conf
+  git: repo=https://github.com/arssher/conf.git
+    dest="{{ ars_conf }}"
+    version=master
+    depth=1
+    accept_hostkey=True
+  when: tags_not_specified is not defined
+  tags: ars
+
+- name: add emacs25 repo
+  apt_repository:
+    repo="ppa:kelleyk/emacs"
+    state=present
+    update_cache=yes
+  become: yes
+  when: tags_not_specified is not defined and ansible_os_family == "Debian"
+  tags: ars
+
+- name: install emacs & other stuff for Arseny
+  apt: name="{{packages}}" state=installed
+  vars:
+    packages:
+    - x11-xkb-utilts
+    - emacs25
+  become: yes
+  when: tags_not_specified is not defined and ansible_os_family == "Debian"
+  tags: ars
+
+- name: setup Arseny's conf
+  shell: >
+    CONFPATH="{{ ars_conf }}"
+    "{{ ars_conf }}"/bash/.bash_scripts/bin/restore_all.sh;
+  when: tags_not_specified is not defined
+  tags: ars
+
+- name: Install packages for Arseny's emacs
+  command: emacs emacs -batch --eval '(message "Hi!")' -u {{ ansible_user}}
+  when: tags_not_specified is not defined
+  tags: ars

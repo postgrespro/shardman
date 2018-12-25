@@ -14,10 +14,8 @@ import (
 	"github.com/jackc/pgx"
 	"github.com/spf13/cobra"
 
-	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/pg"
-	"postgrespro.ru/hodgepodge/internal/store"
 )
 
 var parallelism int
@@ -50,7 +48,7 @@ type MoveTask struct {
 }
 
 func rebalance(cmd *cobra.Command, args []string) {
-	cs, err := cmdcommon.NewClusterStore(&cfg)
+	cs, err := cluster.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}
@@ -427,22 +425,9 @@ func movePartWorkerMain(in <-chan MoveTask, out chan<- report, myid int) {
 
 // Separate func to be able to call from other cmds. Returns true if everything
 // is ok.
-func Rebalance(cs store.ClusterStore, p int, tasks []MoveTask) bool {
-	cldata, _, err := cs.GetClusterData(context.TODO())
-	if err != nil {
-		die("cannot get cluster data: %v", err)
-	}
-	if cldata == nil {
-		die("cluster %v not found", cfg.ClusterName)
-	}
-
-	rgs, _, err := cs.GetRepGroups(context.TODO())
-	if err != nil {
-		die("Failed to get repgroups: %v", err)
-	}
-
+func Rebalance(cs *cluster.ClusterStore, p int, tasks []MoveTask) bool {
 	// fill connstrs
-	connstrs, err := pg.GetSuConnstrs(context.TODO(), rgs, cldata)
+	connstrs, err := pg.GetSuConnstrs(context.TODO(), cs)
 	if err != nil {
 		die("Failed to get connstrs: %v", err)
 	}

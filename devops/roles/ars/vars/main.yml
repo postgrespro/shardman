@@ -1,0 +1,3 @@
+---
+
+ars_conf: "{{ ansible_env.HOME }}/ars_conf"

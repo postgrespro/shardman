@@ -1,0 +1,14 @@
+[Unit]
+Description=monitoring daemon for hodgepodge
+Documentation=https://github.com/arssher/hodgepodge
+
+[Service]
+Type=simple
+EnvironmentFile={{ data_dir }}/monitor-{{ cluster_name }}.env
+ExecStart={{ hodgepodge_src }}/go/bin/hodgepodge-monitor
+Restart=always
+RestartSec=10s
+
+# start it when bowl is started (if this unit is enabled)
+[Install]
+WantedBy=hodgepodge-bowl-{{ cluster_name }}.service

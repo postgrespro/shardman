@@ -1,0 +1,19 @@
+{
+    "LadleSpec": {
+	"DataDir": "{{ data_dir }}",
+	"StolonBinPath": "{{ stolon_src }}/bin",
+	"PgBinPath": "{{ pg_inst }}/bin"
+    },
+    "ClusterSpec": {
+	"PgSuAuthMethod": "trust",
+	"PgSuUsername": "{{ ansible_user }}",
+	"PgReplUsername": "repluser",
+	"PgReplAuthMethod": "trust",
+	"StolonSpec": {
+	  "pgHBA": [
+	    "host all {{ ansible_user }} 0.0.0.0/0 trust",
+	    "host all repluser 0.0.0.0/0 trust"
+	  ]
+	}
+    }
+}

@@ -1,0 +1,10 @@
+---
+
+- hosts: nodes
+  tasks:
+
+  - name: make bowls {{ action }}
+    systemd:
+      name: hodgepodge-bowl-{{ cluster_name }}.service
+      scope: user
+      state: "{{ action }}"

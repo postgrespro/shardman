@@ -1,0 +1,38 @@
+---
+# install hodgepodge
+
+- name: clone hodgepodge sources {{ hodgepodge_repo }}/{{ hodgepodge_version_tag }}
+  git: repo="{{ hodgepodge_repo }}"
+    dest="{{ hodgepodge_src }}"
+    version="{{ hodgepodge_version_tag }}"
+    depth=1
+    accept_hostkey=True
+    force=yes
+  when: hodgepodge_use_repo | bool
+
+- name: copy hodgepodge from {{ hodgepodge_local_dir }}
+  synchronize:
+    src="{{ hodgepodge_local_dir }}"
+    dest="{{ hodgepodge_src }}"
+  when: not (hodgepodge_use_repo | bool)
+  tags:
+    - copy_hodgepodge
+
+- name: build hodgepodge go
+  command: make
+  args:
+    chdir: "{{ hodgepodge_src }}/go"
+
+- name: add hodgepodge binaries to PATH in .bashrc
+  lineinfile:
+    path: "{{ ansible_env.HOME}}/.bashrc"
+    line: 'export PATH=$PATH:{{ hodgepodge_src }}/go/bin'
+    # important, otherwise not read in non-interactive sessions
+    insertbefore: BOF
+
+- name: build and install hodgepodge ext
+  shell: make clean && make && make -j {{ makejobs }} install
+  args:
+    chdir: "{{ hodgepodge_src }}/ext"
+  tags:
+    - hodgepodge_ext

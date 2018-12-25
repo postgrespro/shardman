@@ -6,32 +6,31 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/store"
 )
 
-// common args
-type CommonConfig struct {
-	StoreEndpoints string
-	ClusterName    string
-	// TODO: tls
-}
+// set in Makefile
+var HodgepodgeVersion = "not defined during build"
 
-func AddCommonFlags(cmd *cobra.Command, cfg *CommonConfig) {
-	cmd.PersistentFlags().StringVar(&cfg.StoreEndpoints, "store-endpoints",
+func AddCommonFlags(cmd *cobra.Command, cfg *cluster.ClusterStoreConnInfo) {
+	cmd.PersistentFlags().StringVar(&cfg.ClusterName, "cluster-name", "", "cluster name")
+	cmd.PersistentFlags().StringVar(&cfg.StoreConnInfo.Endpoints, "store-endpoints",
 		store.DefaultEtcdEndpoints[0],
 		"a comma-delimited list of store endpoints (use https scheme for tls communication)")
-	cmd.PersistentFlags().StringVar(&cfg.ClusterName, "cluster-name", "", "cluster name")
+	cmd.PersistentFlags().StringVar(&cfg.StoreConnInfo.CAFile, "store-ca-file", "",
+		"verify certificates of HTTPS-enabled store using this CA bundle")
+	cmd.PersistentFlags().StringVar(&cfg.StoreConnInfo.CAFile, "store-cert-file", "",
+		"certificate file for client identification to the store")
+	cmd.PersistentFlags().StringVar(&cfg.StoreConnInfo.Key, "store-key", "",
+		"private key file for client identification to the store")
 }
 
 // check options
-func CheckConfig(cfg *CommonConfig) error {
+func CheckConfig(cfg *cluster.ClusterStoreConnInfo) error {
 	if cfg.ClusterName == "" {
 		return fmt.Errorf("cluster name required")
 	}
 
 	return nil
-}
-
-func NewClusterStore(cfg *CommonConfig) (store.ClusterStore, error) {
-	return store.NewClusterStore(cfg.StoreEndpoints, cfg.ClusterName)
 }

@@ -1,0 +1,51 @@
+---
+
+### general things
+
+ansible_user: ubuntu
+# on fresh ubuntus, there is no 'python' executable
+ansible_python_interpreter: python3
+# make -j
+makejobs: 4
+# create tmpfs at /tmp
+tmpfs: true
+
+### provision things
+
+golang_link: https://dl.google.com/go/go1.11.2.linux-amd64.tar.gz
+
+etcd_link: https://github.com/etcd-io/etcd/releases/download/v3.3.10/etcd-v3.3.10-linux-amd64.tar.gz
+etcd_dirname: 'etcd-v3.3.10-linux-amd64'
+etcd_binpath: "{{ ansible_env.HOME }}/{{ etcd_dirname }}"
+etcd_datadir: "{{ ansible_env.HOME }}/etcd_datadir"
+etcd_cluster_token: etcd-cluster
+etcd_envfile: "{{ ansible_env.HOME }}/{{ etcd_cluster_token }}.env"
+etcd_peer_port: 2380
+etcd_client_port: 2379
+
+# pg_repo: git://git.postgresql.org/git/postgresql.git
+# pg_version_tag: master
+pg_repo: https://github.com/postgrespro/postgres_cluster.git
+pg_version_tag: pg_shardman_11
+pg_prefix: "{{ansible_env.HOME}}/pg"
+# pg_prefix: "/tmp/pg"
+pg_src: "{{pg_prefix}}/src"
+cflags: "-O2"
+pg_inst: "{{pg_prefix}}/install"
+
+stolon_repo: https://github.com/sorintlab/stolon.git
+stolon_version_tag: master
+stolon_src: "{{ ansible_env.HOME }}/stolon"
+
+# download hodgepodge from repo or from local dir
+hodgepodge_use_repo: True
+hodgepodge_repo: https://github.com/arssher/hodgepodge.git
+# when copied from local dir (slash is the end is important)
+hodgepodge_local_dir: /home/ars/postgres/hodgepodge/
+hodgepodge_version_tag: master
+hodgepodge_src: "{{ ansible_env.HOME }}/hodgepodge"
+
+### init things
+
+cluster_name: haha
+data_dir: "{{ ansible_env.HOME }}/hodgepodge_data"

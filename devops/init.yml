@@ -1,0 +1,102 @@
+# deploy a cluster
+---
+
+- hosts: nodes
+  tasks:
+  - name: "run user dbus (actually useful only for development: bowl service file requires it anyway)"
+    systemd:
+      name: dbus.service
+      scope: user
+      state: started
+    tags:
+    - user_dbus
+
+  - name: instantiate bowl unit file
+    template:
+      src: templates/hodgepodge-bowl.service.j2
+      dest: "{{ ansible_env.HOME }}/.config/systemd/user/hodgepodge-bowl-{{ cluster_name }}.service"
+    tags:
+    - bowl_unit
+    - units
+
+  - name: instantiate monitor unit file
+    template:
+      src: templates/hodgepodge-monitor.service.j2
+      dest: "{{ ansible_env.HOME }}/.config/systemd/user/hodgepodge-monitor-{{ cluster_name }}.service"
+    tags:
+    - monitor_unit
+    - units
+
+  - name: instantiate keeper unit file
+    template:
+      src: templates/hodgepodge-keeper@.service.j2
+      dest: "{{ ansible_env.HOME }}/.config/systemd/user/hodgepodge-keeper-{{ cluster_name }}@.service"
+    tags:
+    - keeper_unit
+    - units
+
+  - name: instantiate sentinel unit file
+    template:
+      src: templates/hodgepodge-sentinel@.service.j2
+      dest: "{{ ansible_env.HOME }}/.config/systemd/user/hodgepodge-sentinel-{{ cluster_name }}@.service"
+    tags:
+    - sentinel_unit
+    - units
+
+  - name: instantiate proxy unit file
+    template:
+      src: templates/hodgepodge-proxy@.service.j2
+      dest: "{{ ansible_env.HOME }}/.config/systemd/user/hodgepodge-proxy-{{ cluster_name }}@.service"
+    tags:
+    - proxy_unit
+    - units
+
+  - name: reload systemd
+    systemd:
+      daemon_reload: yes
+      scope: user
+
+  - name: instantiate spec file
+    template:
+      src: templates/hpspec.json.j2
+      dest: "{{ ansible_env.HOME }}/hpspec.json"
+    tags:
+      instantiate_spec
+
+  - name: destoy data dir
+    file: path="{{ data_dir }}" state=absent
+    tags:
+      - destory_data_dir
+
+  - name: create data dir
+    file: path="{{ data_dir }}" state=directory
+    tags:
+      - create_data_dir
+
+  - name: prepare bowls env file
+    template:
+      src: templates/bowl.env.j2
+      dest: "{{ data_dir }}/bowl-{{ cluster_name }}.env"
+    tags:
+      bowl_env
+
+  - name: start bowls
+    systemd:
+      name: hodgepodge-bowl-{{ cluster_name }}.service
+      scope: user
+      state: restarted
+      enabled: yes
+    tags:
+      start_bowl
+
+  - name: init cluster
+    command: hodgepodge-ladle --store-endpoints {{ lookup('template', 'etcd_endpoints.j2') }} --cluster-name {{ cluster_name }} init -f hpspec.json
+    run_once: true
+    tags:
+    - init
+
+  - name: add nodes
+    command: hodgepodge-ladle --store-endpoints {{ lookup('template', 'etcd_endpoints.j2') }} --cluster-name {{ cluster_name }} addnodes -n {{ lookup('template', 'comma_separated_nodes.j2') }}
+    run_once: true
+    tags:
+    - add_nodes

@@ -1,0 +1,3 @@
+{% for host in ansible_play_hosts %}
+{{ hostvars[host]['ansible_nodename'] }}{% if not loop.last %},{% endif %}
+{% endfor %}

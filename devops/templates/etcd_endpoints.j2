@@ -1,0 +1,3 @@
+{% for host in groups['etcd_nodes'] %}
+http://{{ hostvars[host]['ansible_nodename'] }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}
+{% endfor %}

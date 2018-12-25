@@ -23,11 +23,11 @@ import (
 	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/pg"
-	"postgrespro.ru/hodgepodge/internal/store"
+	"postgrespro.ru/hodgepodge/internal/utils"
 )
 
 // Here we will store args
-var cfg cmdcommon.CommonConfig
+var cfg cluster.ClusterStoreConnInfo
 var noXR bool
 var noDD bool
 var checkDeadlockIntervalRaw string
@@ -56,6 +56,10 @@ Running several instances is safe.
 
 // Entry point
 func Execute() {
+	if err := utils.SetFlagsFromEnv(hpmonCmd.PersistentFlags(), "HPMONITOR"); err != nil {
+		log.Fatalf("%v", err)
+	}
+
 	if err := hpmonCmd.Execute(); err != nil {
 		log.Fatalf(err.Error())
 	}
@@ -96,7 +100,7 @@ func parseDuration(raw string) (time.Duration, error) {
 }
 
 type hpMonState struct {
-	cs                  store.ClusterStore
+	cs                  *cluster.ClusterStore
 	ctx                 context.Context
 	workers             map[int]chan clusterState // rgid is the key
 	xact_resolverch     chan clusterState
@@ -160,7 +164,7 @@ func reloadStore(state *hpMonState) {
 	var clstate = clusterState{rgs: make(map[int]*repGroupState)}
 
 	if state.cs == nil {
-		state.cs, err = cmdcommon.NewClusterStore(&cfg)
+		state.cs, err = cluster.NewClusterStore(&cfg)
 		if err != nil {
 			log.Printf("Failed to create store: %v", err)
 			return
@@ -196,7 +200,7 @@ func reloadStore(state *hpMonState) {
 
 	// learn connstrs
 	for rgid, rg := range rgs {
-		connstrmap, err := store.GetSuConnstrMap(state.ctx, rg, cldata)
+		connstrmap, err := state.cs.GetSuConnstrMap(state.ctx, rg, cldata)
 		if err != nil {
 			log.Printf("Failed to get connstr for rgid %d: %v", rgid, err)
 			return

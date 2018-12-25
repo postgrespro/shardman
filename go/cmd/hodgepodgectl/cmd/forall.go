@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	cmdcommon "postgrespro.ru/hodgepodge/cmd"
+	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/pg"
 )
 
@@ -35,7 +35,7 @@ func init() {
 }
 
 func forall(cmd *cobra.Command, args []string) {
-	cs, err := cmdcommon.NewClusterStore(&cfg)
+	cs, err := cluster.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}
@@ -55,7 +55,7 @@ func forall(cmd *cobra.Command, args []string) {
 	} else if len(rgs) == 0 {
 		die("Please add at least one repgroup")
 	}
-	bcst, err := pg.NewBroadcaster(rgs, cldata)
+	bcst, err := pg.NewBroadcaster(cs, rgs, cldata)
 	if err != nil {
 		die("Failed to create broadcaster: %v", err)
 	}

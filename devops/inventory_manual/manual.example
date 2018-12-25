@@ -1,0 +1,16 @@
+# For local development
+
+# [manual]
+# [manual:children]
+# manual_shardlord
+# manual_workers
+
+# [manual_shardlord]
+# 10.42.42.10
+
+# [manual_workers]
+# 10.42.42.20
+# 10.42.42.30
+
+# [manual_init_node]
+# 10.42.42.20

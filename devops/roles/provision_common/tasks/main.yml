@@ -1,0 +1,113 @@
+---
+# common provisioning stuff
+
+- name: set Moscow timezone
+  timezone:
+    name: Europe/Moscow
+  become: yes
+  tags:
+    - tz
+
+- name: mount tmpfs as /tmp
+  mount: >
+    name=/tmp src='tmpfs' fstype=tmpfs
+    opts='size={{ (ansible_memtotal_mb * 0.5) | int }}m' state=mounted
+  become: yes
+  when: tmpfs
+  tags:
+    - tmpfs
+
+- name: update apt cache
+  apt: update_cache=yes
+  become: yes
+  tags:
+    - apt_cache
+
+- name: ensure dependencies (Debian)
+  apt: name={{packages}} state=present
+  vars:
+    packages:
+      - git
+      - automake
+      - libtool
+      - build-essential
+      - bison
+      - flex
+      - libreadline-dev
+      - zlib1g-dev
+      - gdb
+      - libevent-dev # for pgbouncer
+      - dbus-user-session # run dbus user session for bowl
+      - ntpdate # time sync
+  become: yes
+  tags:
+    - ensure_deps
+    - build_pg
+
+- name: download golang
+  get_url:
+    url: "{{ golang_link }}"
+    dest: "{{ansible_env.HOME}}/go.tar.gz"
+  tags:
+    - golang
+
+- name: unarchive golang
+  unarchive:
+    src: "{{ansible_env.HOME}}/go.tar.gz"
+    dest: "{{ansible_env.HOME}}"
+    copy: no
+  tags:
+    - golang
+
+- name: add golang binaries to PATH in .bashrc
+  lineinfile:
+    path: "{{ ansible_env.HOME}}/.bashrc"
+    line: 'export PATH=$PATH:{{ ansible_env.HOME}}/go/bin'
+    # important, otherwise not read in non-interactive sessions
+    insertbefore: BOF
+  tags:
+    - golang
+
+- name: run user service always
+  command: loginctl enable-linger {{ ansible_user }}
+  become: yes
+  tags:
+    - enable_linger
+
+- name: make journald logging persistent
+  lineinfile:
+    path: "/etc/systemd/journald.conf"
+    line: Storage=persistent
+  become: yes
+  tags:
+    - journald_persistent
+    - journald
+
+- name: restrict journald log size
+  lineinfile:
+    path: "/etc/systemd/journald.conf"
+    line: SystemMaxUse=20M
+    regexp: '^SystemMaxUse='
+  become: yes
+  tags:
+    - journald_restrict_logs
+    - journald
+
+- name: reload journald
+  command: systemctl restart systemd-journald
+  become: yes
+  tags:
+    - journald_restart
+    - journald
+
+- name: purge unattended-upgrades -- it has some bug and periodically eats 100% cpu
+  apt: name=unattended-upgrades state=absent
+  become: yes
+  tags:
+    - disable_unattended_upgrades
+
+- name: sync time
+  command: ntpdate time.google.com
+  become: yes
+  tags:
+    - ntp

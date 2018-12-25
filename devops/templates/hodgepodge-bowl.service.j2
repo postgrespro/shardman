@@ -1,0 +1,23 @@
+# Each hp cluster is attended by separate bowl-keeper-etc set of service files.
+# The main reason is that we can't make e.g. keeper@clustername_rgid_keeperid
+# service require bowl@clustername; making one bowl manage all clusters doesn't
+# look like a good idea either -- can't start/stop one cluster.
+# data_dir is also hardcoded here during deployment since we need to arrange
+# a place where to look for env files.
+[Unit]
+Description=deployment daemon for hodgepodge
+Documentation=https://github.com/arssher/hodgepodge
+# we need user dbus bus to work with units
+Requires=dbus.service
+
+[Service]
+Type=simple
+EnvironmentFile={{ data_dir }}/bowl-{{ cluster_name }}.env
+ExecStart={{ hodgepodge_src }}/go/bin/hodgepodge-bowl
+Restart=always
+RestartSec=10s
+
+# start it on boot
+[Install]
+# note that multi-user.target doesn't exit in user systemd
+WantedBy=default.target

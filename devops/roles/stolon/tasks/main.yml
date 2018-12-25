@@ -1,0 +1,22 @@
+---
+# install stolon
+
+- name: clone stolon sources {{ stolon_repo }}/{{ stolon_version_tag }}
+  git: repo="{{ stolon_repo }}"
+    dest="{{ stolon_src }}"
+    version="{{ stolon_version_tag }}"
+    depth=1
+    accept_hostkey=True
+    force=yes
+
+- name: build stolon
+  command: "{{ stolon_src }}/build"
+  tags:
+    - build_stolon
+
+- name: add stolon binaries to PATH in .bashrc
+  lineinfile:
+    path: "{{ ansible_env.HOME}}/.bashrc"
+    line: 'export PATH=$PATH:{{ stolon_src }}/bin'
+    # important, otherwise not read in non-interactive sessions
+    insertbefore: BOF

@@ -1,0 +1,23 @@
+# unqualified first name
+ETCD_NAME={{ ansible_hostname }}
+# where we actually listen for peers
+ETCD_LISTEN_PEER_URLS=http://0.0.0.0:{{ etcd_peer_port }}
+# where we actually listen for clients
+ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:{{ etcd_client_port }}
+# advertise where this machine is listening for clients
+ETCD_ADVERTISE_CLIENT_URLS=http://{{ ansible_nodename }}:{{ etcd_client_port }}
+
+# --initial flags are used during bootstrapping and ignored afterwards, so it is
+# ok to specify them always
+# advertise where this machine is listening for peer
+ETCD_INITIAL_ADVERTISE_PEER_URLS=http://{{ ansible_nodename }}:{{ etcd_peer_port }}
+ETCD_INITIAL_CLUSTER_TOKEN={{ etcd_cluster_token }}
+# ansible_nodename is fqdn
+ETCD_INITIAL_CLUSTER={% for host in ansible_play_hosts %}
+{{ hostvars[host]['ansible_hostname'] }}=http://{{ hostvars[host]['ansible_nodename'] }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}
+{% endfor %}
+
+ETCD_INITIAL_CLUSTER_STATE=new
+
+ETCD_DATA_DIR={{ etcd_datadir }}
+ETCD_AUTO_COMPACTION_RETENTION=1

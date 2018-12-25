@@ -15,6 +15,13 @@ const (
 	requestTimeout = 5 * time.Second
 )
 
+// KVPair represents {Key, Value, Lastindex} tuple
+type KVPair struct {
+	Key       string
+	Value     []byte
+	LastIndex uint64
+}
+
 // There are no array consts in go
 var DefaultEtcdEndpoints = [...]string{"http://127.0.0.1:2379"}
 
@@ -24,6 +31,11 @@ type EtcdV3Store struct {
 
 func NewEtcdV3Store(cli *etcdclientv3.Client) EtcdV3Store {
 	return EtcdV3Store{c: cli}
+}
+
+// get underlying client
+func (s *EtcdV3Store) GetClient() *etcdclientv3.Client {
+	return s.c
 }
 
 func (s *EtcdV3Store) Put(pctx context.Context, key string, value []byte) error {

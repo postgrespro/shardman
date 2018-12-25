@@ -1,0 +1,16 @@
+# For local development
+
+[nodes:vars]
+ansible_user=ubuntu
+
+[nodes]
+10.42.42.10
+10.42.42.20
+10.42.42.30
+10.42.42.40
+
+# a way to automate this?
+[etcd_nodes]
+10.42.42.10
+10.42.42.20
+10.42.42.30

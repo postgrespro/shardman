@@ -1,0 +1,39 @@
+---
+
+- hosts: nodes
+  tasks:
+
+  # to run something iff tags were specified
+  - shell: /bin/true
+    register: tags_not_specified
+
+  - import_role:
+      name: ars
+    tags:
+      - ars
+  - import_role:
+      name: provision_common
+    tags:
+      - common
+
+- hosts: etcd_nodes
+  tasks:
+  - import_role:
+      name: etcd
+    tags:
+      - etcd
+
+- hosts: nodes
+  tasks:
+  - import_role:
+      name: postgres
+    tags:
+      - postgres
+  - import_role:
+      name: stolon
+    tags:
+      - stolon
+  - import_role:
+      name: hodgepodge
+    tags:
+      - hodgepodge

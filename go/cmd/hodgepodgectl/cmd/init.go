@@ -4,98 +4,81 @@ package cmd
 
 import (
 	"context"
-	"os/user"
+	"encoding/json"
+	"io/ioutil"
+	"log"
+	"os"
 
 	"github.com/spf13/cobra"
 
-	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
+	"postgrespro.ru/hodgepodge/internal/cluster/commands"
 )
 
-// init-specific options
-type InitConfig struct {
-	pgSuAuthMethod string
-	pgSuPassword   string
-	pgSuUsername   string
-}
-
-var initcfg InitConfig
+var specFile string
 
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Run:   initCluster,
 	Short: "Initialize a new cluster",
-	PersistentPreRun: func(c *cobra.Command, args []string) {
-		if initcfg.pgSuAuthMethod != "trust" && initcfg.pgSuPassword == "" {
-			die("Password not provided and authmethod is not trust")
-		}
-	},
 }
 
 func init() {
 	rootCmd.AddCommand(initCmd)
 
-	initCmd.Flags().StringVar(&initcfg.pgSuAuthMethod, "pg-su-auth-method",
-		"scram-sha-256",
-		"postgres superuser auth method. Only trust, md5 and scram-sha-256 are supported")
-	initCmd.Flags().StringVar(&initcfg.pgSuPassword, "pg-su-password",
-		"", "postgres superuser password")
-	user, err := user.Current()
-	if err != nil {
-		panic(err)
-	}
-	initCmd.Flags().StringVar(&initcfg.pgSuUsername, "pg-su-username",
-		user.Name, "postgres user name. User name and its auth method must be the same at all replication groups. Default is current os user.")
-
+	initCmd.PersistentFlags().StringVarP(&specFile, "spec-file", "f", "",
+		`json file containing the new cluster spec. If "-", read from stdin. The format and defaults are:
+{
+  // Postgres superuser auth method. Only trust, md5 and scram-sha-256 are supported.
+  "PgSuAuthMethod": "trust",
+  // Postgres superuser password.
+  "PgSuPassword": "",
+  // Postgres superuser user name. User name and its auth method must be the same at all replication groups. Default is current os user.
+  "PgSuUsername": "joe"
+  // Stolon spec as passed to 'stolonctl init --file'
+  "StolonSpec": {
+    ...
+  }
+}
+`)
 }
 
 func initCluster(cmd *cobra.Command, args []string) {
-	cs, err := cmdcommon.NewClusterStore(&cfg)
+	cs, err := cluster.NewClusterStore(&cfg)
 	if err != nil {
 		die("failed to create store: %v", err)
 	}
 	defer cs.Close()
 
-	cldata, _, err := cs.GetClusterData(context.TODO())
-	if err != nil {
-		die("cannot get cluster data: %v", err)
-	}
-	if cldata != nil {
-		stdout("WARNING: overriding existing cluster")
+	if specFile != "" && len(args) == 1 {
+		die("cluster spec must be provided as direct argument or as file to read (--spec-file/-f option), but not both")
 	}
 
-	err = cs.PutRepGroups(context.TODO(), map[int]*cluster.RepGroup{})
-	if err != nil {
-		die("failed to save repgroup data in store")
+	var specdata = []byte("{}")
+	if specFile != "" {
+		var err error
+		if specFile == "-" {
+			specdata, err = ioutil.ReadAll(os.Stdin)
+			if err != nil {
+				log.Fatalf("cannot read from stdin: %v", err)
+			}
+		} else {
+			specdata, err = ioutil.ReadFile(specFile)
+			if err != nil {
+				log.Fatalf("cannot read file: %v", err)
+			}
+		}
 	}
-	// We configure access for su from anywhere. TODO: allow more restrictive
-	autopgrestart := true // apparently no way in go to get addr of literal
-	stolonspec := &cluster.StolonSpec{
-		PGHBA: []string{
-			"host all " + initcfg.pgSuUsername + " 0.0.0.0/0 " + initcfg.pgSuAuthMethod,
-			"host all " + initcfg.pgSuUsername + " ::0/0 " + initcfg.pgSuAuthMethod},
-		PGParameters: map[string]string{
-			"log_statement":             "all",
-			"log_line_prefix":           "%m [%r][%p]",
-			"log_min_messages":          "INFO",
-			"max_prepared_transactions": "100",
-			// FIXME: stolon forces hot_standby, apparently for its own conns
-			// "hot_standby": "off", // disable connections to replicas
-			"wal_level":                "logical", // rebalance
-			"shared_preload_libraries": "hodgepodge",
-		},
-		AutomaticPgRestart: &autopgrestart,
-	}
-	cldatanew := &cluster.ClusterData{
-		FormatVersion:  cluster.CurrentFormatVersion,
-		PgSuAuthMethod: initcfg.pgSuAuthMethod,
-		PgSuPassword:   initcfg.pgSuPassword,
-		PgSuUsername:   initcfg.pgSuUsername,
-		StolonSpec:     stolonspec,
-	}
-	err = cs.PutClusterData(context.TODO(), cldatanew)
-	if err != nil {
-		die("failed to save clusterdata in store")
+	if len(args) == 1 {
+		specdata = []byte(args[0])
 	}
 
+	var spec cluster.ClusterSpec
+	if err := json.Unmarshal(specdata, &spec); err != nil {
+		log.Fatalf("failed to unmarshal cluster spec: %v", err)
+	}
+	err = commands.InitCluster(context.TODO(), cs, &spec)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
 }

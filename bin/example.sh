@@ -15,8 +15,6 @@ psql -c "insert into pt select a.i, a.i from (select generate_series(1, 1000) i)
 
 hodgepodgectl rebalance --cluster-name haha -p 10
 
-hodgepodgectl drop-table --cluster-name haha --relname pt
-
 hodgepodgectl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_1
 hodgepodgectl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_2
 hodgepodgectl rmrepgroup --cluster-name haha --store-endpoints localhost:2379 --stolon-name cluster_3
@@ -31,3 +29,8 @@ hodgepodgectl forall --cluster-name haha  --sql "create extension hodgepodge;"
 hodgepodge-monitor --cluster-name haha
 
 make -C ~/postgres/hodgepodge/ext/ clean && make -C ~/postgres/hodgepodge/ext/ install && hodgepodgectl forall --cluster-name haha  --sql "drop extension hodgepodge;" && hodgepodgectl forall --cluster-name haha  --sql "create extension hodgepodge;"
+
+###################################
+
+hodgepodge-ladle --cluster-name haha init -f hpspec.json
+hodgepodge-ladle --cluster-name haha addnodes -n vg1,vg2,vg3
