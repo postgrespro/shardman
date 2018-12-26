@@ -13,7 +13,7 @@ import (
 // set in Makefile
 var HodgepodgeVersion = "not defined during build"
 
-func AddCommonFlags(cmd *cobra.Command, cfg *cluster.ClusterStoreConnInfo) {
+func AddCommonFlags(cmd *cobra.Command, cfg *cluster.ClusterStoreConnInfo, logLevel *string) {
 	cmd.PersistentFlags().StringVar(&cfg.ClusterName, "cluster-name", "", "cluster name")
 	cmd.PersistentFlags().StringVar(&cfg.StoreConnInfo.Endpoints, "store-endpoints",
 		store.DefaultEtcdEndpoints[0],
@@ -24,6 +24,9 @@ func AddCommonFlags(cmd *cobra.Command, cfg *cluster.ClusterStoreConnInfo) {
 		"certificate file for client identification to the store")
 	cmd.PersistentFlags().StringVar(&cfg.StoreConnInfo.Key, "store-key", "",
 		"private key file for client identification to the store")
+
+	cmd.PersistentFlags().StringVar(logLevel, "log-level", "info",
+		"error|warn|info|debug")
 }
 
 // check options

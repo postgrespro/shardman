@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"os/exec"
 	"strings"
 	"time"
@@ -14,10 +13,11 @@ import (
 	"github.com/jackc/pgx"
 
 	"postgrespro.ru/hodgepodge/internal/cluster"
+	"postgrespro.ru/hodgepodge/internal/hplog"
 	"postgrespro.ru/hodgepodge/internal/pg"
 )
 
-func AddRepGroup(ctx context.Context, cs *cluster.ClusterStore, hpc *cluster.StoreConnInfo, newrg *cluster.RepGroup) error {
+func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore, hpc *cluster.StoreConnInfo, newrg *cluster.RepGroup) error {
 	cldata, _, err := cs.GetClusterData(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot get cluster data: %v", err)
@@ -81,7 +81,7 @@ func AddRepGroup(ctx context.Context, cs *cluster.ClusterStore, hpc *cluster.Sto
 	var max_attemtps = 3
 	var attempt = 1
 	for {
-		log.Printf("Waiting for config apply...")
+		hl.Infof("Waiting for config apply...")
 		var max_prepared_transactions int
 		update_conf_conn, err := pgx.Connect(newconnconfig)
 		if err != nil {
@@ -105,7 +105,7 @@ func AddRepGroup(ctx context.Context, cs *cluster.ClusterStore, hpc *cluster.Sto
 		if max_prepared_transactions == 0 {
 			time.Sleep(1 * time.Second)
 		} else {
-			log.Printf("Done")
+			hl.Infof("Done")
 			update_conf_conn.Close()
 			break
 		}

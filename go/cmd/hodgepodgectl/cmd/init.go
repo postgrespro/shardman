@@ -46,12 +46,12 @@ func init() {
 func initCluster(cmd *cobra.Command, args []string) {
 	cs, err := cluster.NewClusterStore(&cfg)
 	if err != nil {
-		die("failed to create store: %v", err)
+		hl.Fatalf("failed to create store: %v", err)
 	}
 	defer cs.Close()
 
 	if specFile != "" && len(args) == 1 {
-		die("cluster spec must be provided as direct argument or as file to read (--spec-file/-f option), but not both")
+		hl.Fatalf("cluster spec must be provided as direct argument or as file to read (--spec-file/-f option), but not both")
 	}
 
 	var specdata = []byte("{}")

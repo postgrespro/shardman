@@ -22,7 +22,7 @@ var faCmd = &cobra.Command{
 	Short: "Execute piece of SQL on all replication groups",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
 		if sql == "" {
-			die("sql is required")
+			hl.Fatalf("sql is required")
 		}
 	},
 }
@@ -37,27 +37,27 @@ func init() {
 func forall(cmd *cobra.Command, args []string) {
 	cs, err := cluster.NewClusterStore(&cfg)
 	if err != nil {
-		die("failed to create store: %v", err)
+		hl.Fatalf("failed to create store: %v", err)
 	}
 	defer cs.Close()
 
 	cldata, _, err := cs.GetClusterData(context.TODO())
 	if err != nil {
-		die("cannot get cluster data: %v", err)
+		hl.Fatalf("cannot get cluster data: %v", err)
 	}
 	if cldata == nil {
-		die("cluster %v not found", cfg.ClusterName)
+		hl.Fatalf("cluster %v not found", cfg.ClusterName)
 	}
 
 	rgs, _, err := cs.GetRepGroups(context.TODO())
 	if err != nil {
-		die("Failed to get repgroups: %v", err)
+		hl.Fatalf("Failed to get repgroups: %v", err)
 	} else if len(rgs) == 0 {
-		die("Please add at least one repgroup")
+		hl.Fatalf("Please add at least one repgroup")
 	}
 	bcst, err := pg.NewBroadcaster(cs, rgs, cldata)
 	if err != nil {
-		die("Failed to create broadcaster: %v", err)
+		hl.Fatalf("Failed to create broadcaster: %v", err)
 	}
 	defer bcst.Close()
 
@@ -68,7 +68,7 @@ func forall(cmd *cobra.Command, args []string) {
 
 	results, err := bcst.Commit(twophase)
 	if err != nil {
-		die("bcst failed: %v", err)
+		hl.Fatalf("bcst failed: %v", err)
 	}
 
 	for rgid, res := range results {

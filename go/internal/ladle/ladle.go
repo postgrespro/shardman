@@ -6,13 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"path/filepath"
 	"time"
 
 	"github.com/jackc/pgx"
 	"postgrespro.ru/hodgepodge/internal/cluster"
 	"postgrespro.ru/hodgepodge/internal/cluster/commands"
+	"postgrespro.ru/hodgepodge/internal/hplog"
 	"postgrespro.ru/hodgepodge/internal/pg"
 	"postgrespro.ru/hodgepodge/internal/store"
 )
@@ -197,7 +197,7 @@ func validateSpec(spec *LadleSpec) error {
 	return nil
 }
 
-func (ls *LadleStore) InitCluster(ctx context.Context, spec *LadleSpec, clusterSpec *cluster.ClusterSpec, clusterStoreConnInfo *cluster.ClusterStoreConnInfo) error {
+func (ls *LadleStore) InitCluster(ctx context.Context, hl *hplog.Logger, spec *LadleSpec, clusterSpec *cluster.ClusterSpec, clusterStoreConnInfo *cluster.ClusterStoreConnInfo) error {
 	// fill defaults and validate config
 	adjustSpecDefaults(spec, &clusterStoreConnInfo.StoreConnInfo)
 	if err := validateSpec(spec); err != nil {
@@ -218,7 +218,7 @@ func (ls *LadleStore) InitCluster(ctx context.Context, spec *LadleSpec, clusterS
 		return fmt.Errorf("cannot get ladle data: %v", err)
 	}
 	if ldata != nil {
-		log.Printf("WARNING: overriding existing ladle data")
+		hl.Warnf("overriding existing ladle data")
 	}
 	ldatanew := &LadleData{
 		FormatVersion: CurrentFormatVersion,
@@ -258,7 +258,7 @@ func issueCloverSeq(ldata *LadleData) int {
 	return res
 }
 
-func (ls *LadleStore) AddNodes(ctx context.Context, nodes []string) error {
+func (ls *LadleStore) AddNodes(ctx context.Context, hl *hplog.Logger, nodes []string) error {
 	ldata, _, cldata, _, err := ls.GetLadleAndClusterData(ctx)
 	if err != nil {
 		return err
@@ -282,7 +282,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, nodes []string) error {
 		return fmt.Errorf("with clover policy, num of added nodes must be multiple of num of copies stored (%d)", nCopies)
 	}
 
-	log.Printf("Initting Stolon instances...")
+	hl.Infof("Initting Stolon instances...")
 	newCloverIds := make([]int, 0)
 	nNewClovers := len(nodes) / nCopies
 	// configure each new clover
@@ -350,7 +350,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, nodes []string) error {
 
 	// now, before actually adding repgroups, we must wait until keepers get
 	// up and running, which takes quite a bit of time
-	log.Printf("Waiting for keepers/proxies to start... make sure bowl daemons are running on the nodes")
+	hl.Infof("Waiting for keepers/proxies to start... make sure bowl daemons are running on the nodes")
 	for _, cloverId := range newCloverIds {
 		clover := ldata.Clovers[cloverId]
 		for _, master := range clover {
@@ -401,13 +401,13 @@ func (ls *LadleStore) AddNodes(ctx context.Context, nodes []string) error {
 					conn.Close()
 					conn = nil
 				}
-				log.Printf("Waiting for keepers/proxies of rg %s to start... err: %v", rgName, err)
+				hl.Infof("Waiting for keepers/proxies of rg %s to start... err: %v", rgName, err)
 				time.Sleep(2 * time.Second)
 			}
 		}
 	}
 
-	log.Printf("Adding repgroups...")
+	hl.Infof("Adding repgroups...")
 	for _, cloverId := range newCloverIds {
 		clover := ldata.Clovers[cloverId]
 		for _, master := range clover {
@@ -418,7 +418,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, nodes []string) error {
 				StoreConnInfo: cluster.StoreConnInfo{Endpoints: ""},
 				StorePrefix:   "stolon/cluster",
 			}
-			err = commands.AddRepGroup(ctx, ls.ClusterStore, ldata.Spec.StoreConnInfo, &rg)
+			err = commands.AddRepGroup(ctx, hl, ls.ClusterStore, ldata.Spec.StoreConnInfo, &rg)
 			if err != nil {
 				return err
 			}

@@ -46,7 +46,7 @@ func addRepGroup(cmd *cobra.Command, args []string) {
 	}
 	defer cs.Close()
 
-	err = commands.AddRepGroup(context.TODO(), cs, &cfg.StoreConnInfo, &newrg)
+	err = commands.AddRepGroup(context.Background(), hl, cs, &cfg.StoreConnInfo, &newrg)
 	if err != nil {
 		log.Fatalf("addrepgroup failed: %v", err)
 	}

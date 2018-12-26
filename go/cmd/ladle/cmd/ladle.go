@@ -8,11 +8,15 @@ import (
 	"github.com/spf13/cobra"
 	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
+	"postgrespro.ru/hodgepodge/internal/hplog"
 	"postgrespro.ru/hodgepodge/internal/utils"
 )
 
 // Here we will store args
 var cfg cluster.ClusterStoreConnInfo
+var logLevel string
+
+var hl *hplog.Logger
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -29,6 +33,8 @@ var rootCmd = &cobra.Command{
 
 // Entry point
 func Execute() {
+	hl = hplog.GetLoggerWithLevel(logLevel)
+
 	if err := utils.SetFlagsFromEnv(rootCmd.PersistentFlags(), "HPLADLE"); err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -40,5 +46,5 @@ func Execute() {
 
 // Executed on package init
 func init() {
-	cmdcommon.AddCommonFlags(rootCmd, &cfg)
+	cmdcommon.AddCommonFlags(rootCmd, &cfg, &logLevel)
 }

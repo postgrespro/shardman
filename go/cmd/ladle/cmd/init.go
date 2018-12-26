@@ -71,7 +71,7 @@ func initCluster(cmd *cobra.Command, args []string) {
 		log.Fatalf("failed to create store: %v", err)
 	}
 	defer ls.Close()
-	err = ls.InitCluster(context.TODO(), &initCfg.LadleSpec, &initCfg.ClusterSpec, &cfg)
+	err = ls.InitCluster(context.Background(), hl, &initCfg.LadleSpec, &initCfg.ClusterSpec, &cfg)
 	if err != nil {
 		log.Fatalf("failed to init cluster: %v", err)
 	}

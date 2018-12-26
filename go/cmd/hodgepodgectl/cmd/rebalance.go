@@ -5,7 +5,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,7 +25,7 @@ var rebCmd = &cobra.Command{
 	Short: "Rebalance the data: moves partitions between replication groups until they are evenly distributed. Based on logical replication and performed mostly seamlessly in background; each partition will be only shortly locked in the end to finally sync the data.",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
 		if parallelism == 0 || parallelism < -1 {
-			die("Wrong parallelism")
+			hl.Fatalf("Wrong parallelism")
 		}
 	},
 }
@@ -50,23 +49,23 @@ type MoveTask struct {
 func rebalance(cmd *cobra.Command, args []string) {
 	cs, err := cluster.NewClusterStore(&cfg)
 	if err != nil {
-		die("failed to create store: %v", err)
+		hl.Fatalf("failed to create store: %v", err)
 	}
 	defer cs.Close()
 
 	tables, err := pg.GetTables(cs, context.TODO())
 	if err != nil {
-		die("Failed to get tables from the store: %v", err)
+		hl.Fatalf("Failed to get tables from the store: %v", err)
 	}
 
 	rgs, _, err := cs.GetRepGroups(context.TODO())
 	if err != nil {
-		die("Failed to get repgroups: %v", err)
+		hl.Fatalf("Failed to get repgroups: %v", err)
 	}
 
 	var tasks = even_rebalance(tables, rgs)
 	if !Rebalance(cs, parallelism, tasks) {
-		die("Something failed, examine the logs")
+		hl.Fatalf("Something failed, examine the logs")
 	}
 }
 
@@ -87,7 +86,7 @@ func even_rebalance(tables []cluster.Table, rgs map[int]*cluster.RepGroup) []Mov
 			if parts, ok := parts_per_rg[rgid]; ok {
 				parts_per_rg[rgid] = append(parts, pnum)
 			} else {
-				die("Metadata is broken: partholder %d is non-existing rgid", rgid)
+				hl.Fatalf("Metadata is broken: partholder %d is non-existing rgid", rgid)
 			}
 		}
 
@@ -174,7 +173,7 @@ const (
 func rwlog(id int, task MoveTask, format string, a ...interface{}) {
 	args := []interface{}{id, task.pnum, task.table_name, task.src_rgid, task.dst_rgid}
 	args = append(args, a...)
-	log.Printf("Worker %d, moving part %d of table %s from %d to %d: "+format, args...)
+	hl.Infof("Worker %d, moving part %d of table %s from %d to %d: "+format, args...)
 }
 
 // Attempt to clean up after ourselves. We try to leave everything clean and
@@ -218,7 +217,7 @@ func rwcleanup(src_conn **pgx.Conn, dst_conn **pgx.Conn, task *MoveTask, state i
 		goto CLOSE_CONNS
 	}
 
-	log.Printf("running cleanup: on dst %s", fmt.Sprintf("drop table if exists %s",
+	hl.Infof("running cleanup: on dst %s", fmt.Sprintf("drop table if exists %s",
 		pg.QI(fmt.Sprintf("%s_%d", task.table_name, task.pnum))))
 	_, err = (*dst_conn).Exec(fmt.Sprintf("drop table if exists %s",
 		pg.QI(fmt.Sprintf("%s_%d", task.table_name, task.pnum))))
@@ -429,7 +428,7 @@ func Rebalance(cs *cluster.ClusterStore, p int, tasks []MoveTask) bool {
 	// fill connstrs
 	connstrs, err := pg.GetSuConnstrs(context.TODO(), cs)
 	if err != nil {
-		die("Failed to get connstrs: %v", err)
+		hl.Fatalf("Failed to get connstrs: %v", err)
 	}
 	for i, task := range tasks {
 		tasks[i].src_connstr = connstrs[task.src_rgid]
@@ -481,7 +480,7 @@ func Rebalance(cs *cluster.ClusterStore, p int, tasks []MoveTask) bool {
 			}
 
 		case _ = <-sigs: // stop all workers immediately
-			log.Printf("Stopping all workers")
+			hl.Infof("Stopping all workers")
 			for i := 0; i < nworkers; i++ {
 				close(chans[i].in)
 			}
@@ -489,7 +488,7 @@ func Rebalance(cs *cluster.ClusterStore, p int, tasks []MoveTask) bool {
 		}
 	}
 	if !ok {
-		log.Printf("rebalance failed; please run 'select hodgepodge.rebalance_cleanup();' to ensure there is no orphane subs/pubs/slots/partitions")
+		hl.Infof("rebalance failed; please run 'select hodgepodge.rebalance_cleanup();' to ensure there is no orphane subs/pubs/slots/partitions")
 	}
 	return ok
 }

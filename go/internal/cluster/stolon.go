@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -202,7 +201,7 @@ func StolonInit(hpc *StoreConnInfo, rg *RepGroup, spec *StolonSpec, stolonBinPat
 	cmdargs = append(cmdargs, string(specj))
 
 	cmd := exec.Command(filepath.Join(stolonBinPath, "stolonctl"), cmdargs...)
-	log.Printf("DEBUG: running %s", strings.Join(cmdargs, " "))
+	// log.Printf("DEBUG: running %s", strings.Join(cmdargs, " "))
 	stdoutStderr, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("stolonctl init failed, cmd: %s, stdout/err: %s, err: %s",

@@ -29,6 +29,7 @@ import (
 
 // Here we will store args
 var cfg cluster.ClusterStoreConnInfo
+var logLevel string
 
 var hostname string
 var keeperUnitRegexp *regexp.Regexp
@@ -51,8 +52,6 @@ var rootCmd = &cobra.Command{
 
 // Entry point
 func Execute() {
-	hl = hplog.GetLoggerWithLevel("debug")
-
 	if err := utils.SetFlagsFromEnv(rootCmd.PersistentFlags(), "HPBOWL"); err != nil {
 		hl.Fatalf("%v", err)
 	}
@@ -64,7 +63,7 @@ func Execute() {
 
 // Executed on package init
 func init() {
-	cmdcommon.AddCommonFlags(rootCmd, &cfg)
+	cmdcommon.AddCommonFlags(rootCmd, &cfg, &logLevel)
 }
 
 type bowlState struct {
@@ -78,6 +77,8 @@ type bowlState struct {
 const retryStoreConnInterval = 2 * time.Second
 
 func bowlMain(c *cobra.Command, args []string) {
+	hl = hplog.GetLoggerWithLevel(logLevel)
+
 	var b = &bowlState{
 		retryTimer: time.NewTimer(0),
 	}

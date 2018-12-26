@@ -19,9 +19,11 @@ import (
 
 	"github.com/jackc/pgx"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
+	"postgrespro.ru/hodgepodge/internal/hplog"
 	"postgrespro.ru/hodgepodge/internal/pg"
 	"postgrespro.ru/hodgepodge/internal/utils"
 )
@@ -32,6 +34,9 @@ var noXR bool
 var noDD bool
 var checkDeadlockIntervalRaw string
 var checkDeadlockInterval time.Duration
+var logLevel string
+
+var hl *hplog.Logger
 
 var hpmonCmd = &cobra.Command{
 	Use: "hpmon",
@@ -44,11 +49,11 @@ Running several instances is safe.
 	PersistentPreRun: func(c *cobra.Command, args []string) {
 		var err error
 		if err = cmdcommon.CheckConfig(&cfg); err != nil {
-			log.Fatalf(err.Error())
+			hl.Fatalf(err.Error())
 		}
 		checkDeadlockInterval, err = parseDuration(checkDeadlockIntervalRaw)
 		if err != nil {
-			log.Fatalf(fmt.Sprintf("wrong deadlock interval: %v", err.Error()))
+			hl.Fatalf(fmt.Sprintf("wrong deadlock interval: %v", err.Error()))
 		}
 	},
 	Run: hpmon,
@@ -66,7 +71,7 @@ func Execute() {
 }
 
 func init() {
-	cmdcommon.AddCommonFlags(hpmonCmd, &cfg)
+	cmdcommon.AddCommonFlags(hpmonCmd, &cfg, &logLevel)
 	hpmonCmd.PersistentFlags().BoolVar(&noXR, "no-xact-resolver", false, "don't run xact resolver")
 	hpmonCmd.PersistentFlags().BoolVar(&noDD, "no-deadlock-detector", false, "don't run deadlock detector")
 	hpmonCmd.PersistentFlags().StringVar(&checkDeadlockIntervalRaw, "deadlock-timeout", "2s", "interval between deadlock checks. Accepted formats are the same as in PostgreSQL's GUCs; default unit is ms, as in PG's deadlock_timeout")
@@ -120,6 +125,8 @@ type repGroupState struct {
 // TODO: we should we add ctx to all pg's commands to prevent any worker
 // hanging, blocking everything
 func hpmon(c *cobra.Command, args []string) {
+	hl = hplog.GetLoggerWithLevel(logLevel)
+
 	var state hpMonState
 	state.workers = make(map[int]chan clusterState)
 	state.xact_resolverch = make(chan clusterState)
@@ -129,6 +136,7 @@ func hpmon(c *cobra.Command, args []string) {
 	state.ctx = ctx
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	go sigHandler(sigs, cancel)
 
 	// Start xact resolver and deadlock detector
 	if !noXR {
@@ -142,12 +150,11 @@ func hpmon(c *cobra.Command, args []string) {
 
 	// TODO: watch instead of polling
 	reloadStoreTimerCh := time.NewTimer(0).C
-	log.Printf("hpmon started")
+	hl.Infof("hpmon started")
 	for {
 		select {
-		case <-sigs:
-			cancel()
-			log.Printf("stopping hpmon")
+		case <-ctx.Done():
+			hl.Infof("stopping hpmon")
 			state.wg.Wait()
 			return
 
@@ -158,7 +165,14 @@ func hpmon(c *cobra.Command, args []string) {
 	}
 }
 
+func sigHandler(sigs chan os.Signal, cancel context.CancelFunc) {
+	s := <-sigs
+	hl.Debugf("got signal %v", s)
+	cancel()
+}
+
 func reloadStore(state *hpMonState) {
+	hl.Debugf("reloadStore")
 	var err error
 	var rgs map[int]*cluster.RepGroup
 	var clstate = clusterState{rgs: make(map[int]*repGroupState)}
@@ -166,20 +180,20 @@ func reloadStore(state *hpMonState) {
 	if state.cs == nil {
 		state.cs, err = cluster.NewClusterStore(&cfg)
 		if err != nil {
-			log.Printf("Failed to create store: %v", err)
+			hl.Errorf("Failed to create store: %v", err)
 			return
 		}
 	}
 	cldata, _, err := state.cs.GetClusterData(state.ctx)
 	if err != nil {
-		log.Printf("cannot get cluster data: %v", err)
+		hl.Errorf("cannot get cluster data: %v", err)
 		// reset store, probably connection failure
 		goto StoreError
 	}
 
 	rgs, _, err = state.cs.GetRepGroups(state.ctx)
 	if err != nil {
-		log.Printf("Failed to get repgroups: %v", err)
+		hl.Errorf("Failed to get repgroups: %v", err)
 		goto StoreError
 	}
 	// shut down workers for removed repgroups
@@ -202,7 +216,7 @@ func reloadStore(state *hpMonState) {
 	for rgid, rg := range rgs {
 		connstrmap, err := state.cs.GetSuConnstrMap(state.ctx, rg, cldata)
 		if err != nil {
-			log.Printf("Failed to get connstr for rgid %d: %v", rgid, err)
+			hl.Errorf("Failed to get connstr for rgid %d: %v", rgid, err)
 			return
 		}
 		clstate.rgs[rgid] = &repGroupState{connstrmap: connstrmap, sysId: rg.SysId}
@@ -233,12 +247,8 @@ type monWorker struct {
 	connstr string
 	// triggers retry if previous attempt failed
 	retryTimer *time.Timer
-}
-
-func (w *monWorker) log(format string, a ...interface{}) {
-	args := []interface{}{w.rgid}
-	args = append(args, a...)
-	log.Printf("Mon worker %d: "+format, args...)
+	// not nice
+	*zap.SugaredLogger
 }
 
 const retryConnInterval = 2 * time.Second
@@ -247,12 +257,13 @@ const retryConnInterval = 2 * time.Second
 func monWorkerMain(ctx context.Context, rgid int, in <-chan clusterState, wg *sync.WaitGroup) {
 	defer wg.Done()
 	var w = monWorker{
-		rgid:       rgid,
-		conn:       nil,
-		retryTimer: time.NewTimer(0),
+		rgid:          rgid,
+		conn:          nil,
+		retryTimer:    time.NewTimer(0),
+		SugaredLogger: hl.With("goroutine", "mon worker", "rgid", rgid),
 	}
 	<-w.retryTimer.C
-	w.log("Starting")
+	w.Infof("Starting")
 
 	for {
 		select {
@@ -260,7 +271,7 @@ func monWorkerMain(ctx context.Context, rgid int, in <-chan clusterState, wg *sy
 			if w.conn != nil {
 				w.conn.Close()
 			}
-			w.log("stopped")
+			w.Infof("stopped")
 			return
 
 		case clstate, ok := <-in:
@@ -268,7 +279,7 @@ func monWorkerMain(ctx context.Context, rgid int, in <-chan clusterState, wg *sy
 				if w.conn != nil {
 					w.conn.Close()
 				}
-				w.log("exit")
+				w.Infof("exit")
 				return
 			}
 			w.clstate = clstate
@@ -294,7 +305,7 @@ func monWorkerFull(w *monWorker) {
 	if w.conn == nil {
 		connconfig, err := pgx.ParseConnectionString(w.connstr)
 		if err != nil {
-			w.log("failed to parse connstr %s: %v", w.connstr, err)
+			w.Errorf("failed to parse connstr %s: %v", w.connstr, err)
 			// no point to retry until new connstr arrives
 			w.retryTimer = time.NewTimer(0)
 			<-w.retryTimer.C
@@ -302,7 +313,7 @@ func monWorkerFull(w *monWorker) {
 		}
 		w.conn, err = pgx.Connect(connconfig)
 		if err != nil {
-			w.log("unable to connect to database: %v", err)
+			w.Warnf("unable to connect to database: %v", err)
 			w.retryTimer = time.NewTimer(retryConnInterval)
 			return
 		}
@@ -319,19 +330,19 @@ func monWorkerFull(w *monWorker) {
 			"select exists (select 1 from pg_foreign_server where srvname = 'hp_rg_%d')",
 			rgid)).Scan(&fs_exists)
 		if err != nil {
-			w.log("failed to check fs existence: %v", err)
+			w.Warnf("failed to check fs existence: %v", err)
 			goto ConnError
 		}
 		if !fs_exists {
 			/* should never happen */
-			w.log("ERROR: foreign server for rgid %d doesn't exist", rgid)
+			w.Errorf("foreign server for rgid %d doesn't exist", rgid)
 			goto ConnError
 		}
 		rows, err := w.conn.Query(fmt.Sprintf(
 			"select split_part(opt, '=', 1) k, split_part(opt, '=', 2) v from (select unnest(srvoptions) opt from pg_foreign_server where srvname = 'hp_rg_%d') o;",
 			rgid))
 		if err != nil {
-			w.log("failed to retrieve fserver info: %v", err)
+			w.Warnf("failed to retrieve fserver info: %v", err)
 			goto ConnError
 		}
 		var currfsoptsmap = make(map[string]string)
@@ -339,13 +350,14 @@ func monWorkerFull(w *monWorker) {
 		for rows.Next() {
 			err = rows.Scan(&key, &value)
 			if err != nil {
-				w.log("%v", err)
+				// xxx panic?
+				w.Errorf("%v", err)
 				goto ConnError
 			}
 			currfsoptsmap[key] = value
 		}
 		if rows.Err() != nil {
-			w.log("%v", rows.Err())
+			w.Errorf("%v", rows.Err())
 			goto ConnError
 		}
 		newfsopts, _ = pg.FormForeignServerOpts(connstrmap)
@@ -356,14 +368,14 @@ func monWorkerFull(w *monWorker) {
 			 * recreating it to stay away from rebuilding foreign
 			 * tables and user mappings.
 			 */
-			w.log("altering foreign server to rg %d", rgid)
+			w.Infof("altering foreign server to rg %d", rgid)
 			/* drop all currents opts */
 			for optname, _ := range currfsoptsmap {
 				_, err = w.conn.Exec(fmt.Sprintf(
 					"alter server hp_rg_%d options (drop %s)",
 					rgid, optname))
 				if err != nil {
-					w.log("failed to drop fs opts: %v", err)
+					w.Warnf("failed to drop fs opts: %v", err)
 					goto ConnError
 				}
 			}
@@ -371,7 +383,7 @@ func monWorkerFull(w *monWorker) {
 			_, err = w.conn.Exec(fmt.Sprintf(
 				"alter server hp_rg_%d %s", rgid, newfsopts))
 			if err != nil {
-				w.log("failed to set new fs opts: %v", err)
+				w.Warnf("failed to set new fs opts: %v", err)
 				goto ConnError
 			}
 		}
@@ -387,10 +399,6 @@ ConnError:
 	w.conn.Close()
 	w.conn = nil
 	w.retryTimer = time.NewTimer(retryConnInterval)
-}
-
-func xrm_log(format string, a ...interface{}) {
-	log.Printf("Xact resolver main: "+format, a...)
 }
 
 type xResolveRequest struct {
@@ -446,6 +454,7 @@ const retryBcstClstateInterval = 1 * time.Second
 // gid format pgfdw:$timestamp:$sys_id:$pid:$xid:$participants_count:$coord_count is assumed
 func xactResolverMain(ctx context.Context, clstatechan chan clusterState, wg *sync.WaitGroup) {
 	defer wg.Done()
+	xrmLog := hl.With("goroutine", "xact resolver main")
 	var state = xactResolverState{
 		xrworkers:        make(map[int]chan interface{}),
 		resolve_requests: make(map[string][]int),
@@ -454,7 +463,7 @@ func xactResolverMain(ctx context.Context, clstatechan chan clusterState, wg *sy
 	}
 	var workers_count int32 = 0 // atomic, used for correct shutdown
 	<-state.retryBcstClstateTimer.C
-	xrm_log("starting")
+	xrmLog.Infof("starting")
 
 MainLoop:
 	for {
@@ -466,7 +475,7 @@ MainLoop:
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
-			xrm_log("stopped")
+			xrmLog.Infof("stopped")
 			return
 
 		case state.clstate = <-clstatechan:
@@ -509,12 +518,12 @@ MainLoop:
 				// ok, try to inquiry this
 				gid_splitted := strings.Split(msg.gid, ":")
 				if len(gid_splitted) < 7 {
-					xrm_log("format of gid %v from rg %d is wrong, ignoring it", msg.gid, msg.requester)
+					xrmLog.Debugf("format of gid %v from rg %d is wrong, ignoring it", msg.gid, msg.requester)
 					continue
 				}
 				coord_sysid, err := strconv.ParseInt(gid_splitted[2], 10, 64)
 				if err != nil {
-					xrm_log("couldn't parse sysid of gid %v, ignoring it", msg.gid)
+					xrmLog.Warnf("couldn't parse sysid of gid %v, ignoring it", msg.gid)
 					continue
 				}
 				for rgid, rg := range state.clstate.rgs {
@@ -529,13 +538,13 @@ MainLoop:
 						continue MainLoop
 					}
 				}
-				xrm_log("ERROR: failed to resolve %s xact from repgroup %d: there is no rg with coordinator sysid %d in the cluster",
+				xrmLog.Errorf("failed to resolve %s xact from repgroup %d: there is no rg with coordinator sysid %d in the cluster",
 					msg.gid, msg.requester, coord_sysid)
 
 			case xStatusResponse:
-				xrm_log("DEBUG: status of xact %v is %v", msg.gid, msg.xStatus)
+				xrmLog.Debugf("status of xact %v is %v", msg.gid, msg.xStatus)
 				if msg.xStatus == xStatusUnknown {
-					xrm_log("ERROR: xact %s is too old to resolve it (status on coordinator is unknown)", msg.gid)
+					xrmLog.Errorf("xact %s is too old to resolve it (status on coordinator is unknown)", msg.gid)
 				}
 				if msg.xStatus == xStatusCommitted ||
 					msg.xStatus == xStatusAborted {
@@ -576,12 +585,6 @@ func xrBroadcastClusterData(state *xactResolverState) {
 	}
 }
 
-func xrw_log(rgid int, format string, a ...interface{}) {
-	args := []interface{}{rgid}
-	args = append(args, a...)
-	log.Printf("Xact resolver %d: "+format, args...)
-}
-
 const checkPreparesInterval = 5 * time.Second
 
 // We only try to resolve prepares created at least resolvePrepareTimeout seconds ago
@@ -589,6 +592,7 @@ const resolvePrepareTimeout = 5
 
 func xactResolverWorkerMain(ctx context.Context, rgid int, in <-chan interface{}, out chan<- interface{}, clstate clusterState, pworkers_count *int32) {
 	// if conn is nil, we must wait until retryConnTimer fixes that
+	xrwLog := hl.With("goroutine", "xact resolver worker", "rgid", rgid)
 	var conn *pgx.Conn = nil
 	var connstr string = pg.ConnString(clstate.rgs[rgid].connstrmap)
 	var retryConnTimer *time.Timer = time.NewTimer(0)
@@ -602,22 +606,22 @@ func xactResolverWorkerMain(ctx context.Context, rgid int, in <-chan interface{}
 				conn.Close()
 			}
 			atomic.AddInt32(pworkers_count, -1)
-			xrw_log(rgid, "stopped")
+			xrwLog.Infof("stopped")
 			return
 
 		case <-retryConnTimer.C:
-			if conn != nil {
+			if conn != nil { // assert
 				panic("not nil conn in retryConnTimer.C")
 			}
 			connconfig, err := pgx.ParseConnectionString(connstr)
 			if err != nil {
-				xrw_log(rgid, "failed to parse connstr %s: %v", connstr, err)
+				xrwLog.Errorf("failed to parse connstr %s: %v", connstr, err)
 				// no point to retry until new connstr arrives
 				continue
 			}
 			conn, err = pgx.Connect(connconfig)
 			if err != nil {
-				xrw_log(rgid, "unable to connect to database: %v", err)
+				xrwLog.Warnf("unable to connect to database: %v", err)
 				retryConnTimer = time.NewTimer(retryConnInterval)
 			}
 
@@ -627,7 +631,7 @@ func xactResolverWorkerMain(ctx context.Context, rgid int, in <-chan interface{}
 					conn.Close()
 				}
 				atomic.AddInt32(pworkers_count, -1)
-				xrw_log(rgid, "exit")
+				xrwLog.Infof("exit")
 				return
 			}
 			switch msg := msg.(type) {
@@ -648,7 +652,7 @@ func xactResolverWorkerMain(ctx context.Context, rgid int, in <-chan interface{}
 				}
 				gid_splitted := strings.Split(msg.gid, ":")
 				if len(gid_splitted) < 7 {
-					xrw_log(rgid, "format of gid %v is wrong, ignoring it", msg.gid)
+					xrwLog.Warnf("format of gid %v is wrong, ignoring it", msg.gid)
 					out <- xStatusResponse{gid: msg.gid, xStatus: xStatusFailedToCheck}
 					continue
 				}
@@ -657,8 +661,8 @@ func xactResolverWorkerMain(ctx context.Context, rgid int, in <-chan interface{}
 				err := conn.QueryRow(fmt.Sprintf(
 					"select txid_status(%s)", xid)).Scan(&statusp)
 				if err != nil {
-					xrw_log(rgid, "failed to check xact %s (xid %s) status: %v", msg.gid, xid, err)
-					xrw_connfail(&conn, &retryConnTimer)
+					xrwLog.Errorf("failed to check xact %s (xid %s) status: %v", msg.gid, xid, err)
+					xrwConnfail(&conn, &retryConnTimer)
 					out <- xStatusResponse{gid: msg.gid, xStatus: xStatusFailedToCheck}
 					continue
 				}
@@ -693,16 +697,16 @@ func xactResolverWorkerMain(ctx context.Context, rgid int, in <-chan interface{}
 				_, err := conn.Exec(fmt.Sprintf("%s prepared %s",
 					action, pg.QL(msg.gid)))
 				if err != nil {
-					xrw_log(rgid, "failed to finish (%v) xact %v: %v",
+					xrwLog.Errorf("failed to finish (%v) xact %v: %v",
 						action, msg.gid, err)
 					// it might be not conn error, but simpler to reconnect anyway
-					xrw_connfail(&conn, &retryConnTimer)
+					xrwConnfail(&conn, &retryConnTimer)
 				}
 			}
 
 		// TODO: get notified about new prepares via NOTIFY?
 		case <-checkPreparesTicker.C:
-			// xrw_log(rgid, "DEBUG: checking prepares")
+			// xrwLog.Debugf(rgid, "checking prepares")
 			if conn == nil {
 				continue
 			}
@@ -711,36 +715,32 @@ func xactResolverWorkerMain(ctx context.Context, rgid int, in <-chan interface{}
 				"select gid from pg_prepared_xacts where extract(epoch from (current_timestamp - prepared))::int >= %d",
 				resolvePrepareTimeout))
 			if err != nil {
-				xrw_log(rgid, "failed to retrieve prepares: %v", err)
+				xrwLog.Warnf("failed to retrieve prepares: %v", err)
 				goto CheckPreparesErr
 			}
 			for rows.Next() {
 				err = rows.Scan(&gid)
 				if err != nil {
-					xrw_log(rgid, "%v", err)
+					xrwLog.Errorf("%v", err)
 					goto CheckPreparesErr // xxx should be panic actually?
 				}
 				out <- xResolveRequest{requester: rgid, gid: gid}
 			}
 			if rows.Err() != nil {
-				xrw_log(rgid, "%v", err)
+				xrwLog.Errorf("%v", err)
 				goto CheckPreparesErr // xxx should be panic actually?
 			}
 			continue
 		CheckPreparesErr:
-			xrw_connfail(&conn, &retryConnTimer)
+			xrwConnfail(&conn, &retryConnTimer)
 		}
 	}
 }
 
-func xrw_connfail(connp **pgx.Conn, retryConnTimerp **time.Timer) {
+func xrwConnfail(connp **pgx.Conn, retryConnTimerp **time.Timer) {
 	(*connp).Close()
 	*connp = nil
 	*retryConnTimerp = time.NewTimer(0)
-}
-
-func dd_log(format string, a ...interface{}) {
-	log.Printf("Deadlock detector main: "+format, a...)
 }
 
 type collectGraph struct{}
@@ -817,6 +817,7 @@ func pprintDeadlock(deadlock []proc, rgs map[int]*repGroupState) string {
 // detected loop persists during deadlock detection period.
 func deadlockDetectorMain(ctx context.Context, clstatechan chan clusterState, wg *sync.WaitGroup) {
 	defer wg.Done()
+	ddLog := hl.With("goroutine", "deadlock detector")
 	checkDeadlockTicker := time.NewTicker(checkDeadlockInterval)
 	defer checkDeadlockTicker.Stop()
 
@@ -826,7 +827,7 @@ func deadlockDetectorMain(ctx context.Context, clstatechan chan clusterState, wg
 	var ddWg sync.WaitGroup
 	var previousDeadlock []proc = nil
 
-	dd_log("starting")
+	ddLog.Infof("starting")
 
 	for {
 		select {
@@ -835,7 +836,7 @@ func deadlockDetectorMain(ctx context.Context, clstatechan chan clusterState, wg
 				close(ch)
 			}
 			ddWg.Wait()
-			dd_log("stopped")
+			ddLog.Infof("stopped")
 			return
 
 		case clstate = <-clstatechan:
@@ -866,7 +867,7 @@ func deadlockDetectorMain(ctx context.Context, clstatechan chan clusterState, wg
 			for i := 0; i < len(ddworkers); i++ {
 				llg := (<-in).(localLockGraph)
 				if llg.err != nil {
-					dd_log("failed to collect lock graph at repgroup %d: %v", llg.rgid, llg.err)
+					ddLog.Warnf("failed to collect lock graph at repgroup %d: %v", llg.rgid, llg.err)
 					fail = true
 					continue
 				}
@@ -882,35 +883,35 @@ func deadlockDetectorMain(ctx context.Context, clstatechan chan clusterState, wg
 						lockGraph[e.hold] = []proc{}
 					}
 				}
-				// dd_log("collected lg from %d:\n%v", llg.rgid, pprintEdges(llg.edges, clstate.rgs))
+				// ddLog.Debugf("collected lg from %d:\n%v", llg.rgid, pprintEdges(llg.edges, clstate.rgs))
 			}
 			if fail {
 				// loops collected with failure between them are unreliable
 				previousDeadlock = nil
 				continue
 			}
-			// dd_log("DEBUG: full graph is\n%v", pprintLockGraph(lockGraph, clstate.rgs))
+			// ddLog.Debugf("full graph is\n%v", pprintLockGraph(lockGraph, clstate.rgs))
 			deadlock := findDeadlock(lockGraph)
 			if deadlock != nil {
-				dd_log("DEBUG: found deadlock!\n  %v\n", pprintDeadlock(deadlock, clstate.rgs))
-				dd_log("DEBUG: prev deadlock:\n  %v\n", pprintDeadlock(previousDeadlock, clstate.rgs))
+				ddLog.Debugf("found deadlock!\n  %v\n", pprintDeadlock(deadlock, clstate.rgs))
+				ddLog.Debugf("prev deadlock:\n  %v\n", pprintDeadlock(previousDeadlock, clstate.rgs))
 				if deadlocksEquivalent(deadlock, previousDeadlock) {
 					// time to kill someone
 					victim_idx := rand.Intn(len(deadlock))
 					victim := deadlock[victim_idx]
 					victim_rgid := rgidBySysid(victim.sysid, clstate.rgs)
-					dd_log("INFO: Deadlock discovered:\n  %v\n  Canceling pid %d at repgroup %d...",
+					ddLog.Infof("Deadlock discovered:\n  %v\n  Canceling pid %d at repgroup %d...",
 						pprintDeadlock(deadlock, clstate.rgs), victim.pid, victim_rgid)
 					ddworkers[victim_rgid] <- cancelBackend{pid: victim.pid}
 					tbr := (<-in).(cancelBackendResponse)
 					if tbr.err != nil {
-						dd_log("INFO: failed to cancel backend %d at repgroup %d: %v",
+						ddLog.Infof("failed to cancel backend %d at repgroup %d: %v",
 							victim.pid, victim_rgid, tbr.err)
 					} else if !tbr.res {
-						dd_log("INFO: Canceling backend %d at repgroup %d missed: pg_cancel_backend returned false",
+						ddLog.Infof("Canceling backend %d at repgroup %d missed: pg_cancel_backend returned false",
 							victim.pid, victim_rgid)
 					} else {
-						dd_log("INFO: successfully canceled backend %d at repgroup %d",
+						ddLog.Infof("successfully canceled backend %d at repgroup %d",
 							victim.pid, victim_rgid)
 					}
 				}

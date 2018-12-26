@@ -36,7 +36,7 @@ func addNodes(cmd *cobra.Command, args []string) {
 	}
 	defer ls.Close()
 
-	err = ls.AddNodes(context.TODO(), nodes)
+	err = ls.AddNodes(context.Background(), hl, nodes)
 	if err != nil {
 		log.Fatalf("failed to add nodes: %v", err)
 	}
