@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,15 +22,19 @@ import (
 
 	cmdcommon "postgrespro.ru/hodgepodge/cmd"
 	"postgrespro.ru/hodgepodge/internal/cluster"
+	"postgrespro.ru/hodgepodge/internal/hplog"
 	"postgrespro.ru/hodgepodge/internal/ladle"
 	"postgrespro.ru/hodgepodge/internal/utils"
 )
 
 // Here we will store args
 var cfg cluster.ClusterStoreConnInfo
+
 var hostname string
 var keeperUnitRegexp *regexp.Regexp
 var ourUnitsRegexp *regexp.Regexp
+
+var hl *hplog.Logger
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -40,7 +43,7 @@ var rootCmd = &cobra.Command{
 	Short:   "deployment daemon for hodgepodge",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
 		if err := cmdcommon.CheckConfig(&cfg); err != nil {
-			log.Fatalf("%v", err)
+			hl.Fatalf("%v", err)
 		}
 	},
 	Run: bowlMain,
@@ -48,12 +51,14 @@ var rootCmd = &cobra.Command{
 
 // Entry point
 func Execute() {
+	hl = hplog.GetLoggerWithLevel("debug")
+
 	if err := utils.SetFlagsFromEnv(rootCmd.PersistentFlags(), "HPBOWL"); err != nil {
-		log.Fatalf("%v", err)
+		hl.Fatalf("%v", err)
 	}
 
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatalf("%v", err)
+		hl.Fatalf("%v", err)
 	}
 }
 
@@ -68,7 +73,6 @@ type bowlState struct {
 	ls         *ladle.LadleStore
 	watchCh    <-chan clientv3.WatchResponse
 	dbusConn   *dbus.Conn
-	sigs       chan os.Signal
 }
 
 const retryStoreConnInterval = 2 * time.Second
@@ -76,13 +80,12 @@ const retryStoreConnInterval = 2 * time.Second
 func bowlMain(c *cobra.Command, args []string) {
 	var b = &bowlState{
 		retryTimer: time.NewTimer(0),
-		sigs:       make(chan os.Signal, 1),
 	}
 
 	var err error
 	b.dbusConn, err = dbus.NewUserConnection()
 	if err != nil {
-		log.Fatalf("FATAL: failed to establish dbus connection: %v", err)
+		hl.Fatalf("failed to establish dbus connection: %v", err)
 	}
 	defer b.dbusConn.Close()
 
@@ -93,12 +96,14 @@ func bowlMain(c *cobra.Command, args []string) {
 		`|hodgepodge-monitor-` + cfg.ClusterName + `)`)
 	hostname, err = os.Hostname()
 	if err != nil {
-		log.Fatalf("FATAL: failed to get hostname: %v", err)
+		hl.Fatalf("failed to get hostname: %v", err)
 	}
 
-	signal.Notify(b.sigs, syscall.SIGINT, syscall.SIGTERM)
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	ctx := context.Background()
-	ctx = clientv3.WithRequireLeader(ctx)
+	ctx, cancelFunc := context.WithCancel(ctx)
+	go sigHandler(sigs, cancelFunc)
 
 	// main loop
 	for {
@@ -108,12 +113,12 @@ func bowlMain(c *cobra.Command, args []string) {
 		}
 
 		select {
-		case <-b.sigs:
+		case <-ctx.Done():
 			if b.ls != nil {
 				b.ls.Close()
 				b.ls = nil
 			}
-			log.Printf("stopping bowl")
+			hl.Infof("stopping bowl")
 			return
 
 		case <-retryTimerCh:
@@ -123,26 +128,46 @@ func bowlMain(c *cobra.Command, args []string) {
 				b.ls, err = ladle.NewLadleStore(&cfg)
 				if err != nil {
 					b.retryTimer = time.NewTimer(retryStoreConnInterval)
-					log.Printf("ERROR: failed to create store: %v", err)
+					hl.Errorf("failed to create store: %v", err)
 					continue
 				}
+			}
+			if b.watchCh == nil {
+				lctx := clientv3.WithRequireLeader(ctx)
 				cli := b.ls.Store.GetClient()
-				b.watchCh = cli.Watch(ctx, b.ls.LadleDataStorePath())
+				b.watchCh = cli.Watch(lctx, b.ls.LadleDataStorePath())
 			}
 			bowlReconfigure(ctx, b)
 
-		case wresp := <-b.watchCh:
-			if wresp.Canceled {
-				log.Printf("ERROR: store (watch) failed: %v", ctx.Err())
-				b.watchCh = nil
-				// xxx we are not recreating client here, hoping
-				// there is fine retry logic
-				b.retryTimer = time.NewTimer(retryStoreConnInterval)
-				continue
+		case wresp, ok := <-b.watchCh:
+			if !ok {
+				// ctx is canceled; or etcd unrecoverable error,
+				// in which case error must have been sent previously
+				hl.Debugf("watch chan is closed")
+				goto recreateWatch
 			}
+			if wresp.Canceled {
+				// etcd unrecoverable error, hmm
+				hl.Errorf("store (watch) failed: %v", wresp.Err())
+				goto recreateWatch
+			}
+
 			bowlReconfigure(ctx, b)
+			continue
+
+		recreateWatch:
+			// xxx we are not recreating client here, hoping
+			// client has fine retry logic
+			b.retryTimer = time.NewTimer(retryStoreConnInterval)
+			b.watchCh = nil
 		}
 	}
+}
+
+func sigHandler(sigs chan os.Signal, cancel context.CancelFunc) {
+	s := <-sigs
+	hl.Debugf("got signal %v", s)
+	cancel()
 }
 
 type unitI interface {
@@ -166,19 +191,19 @@ func (u unit) disableNow(c *dbus.Conn) error {
 
 	_, err := c.StopUnit(u.name, "replace", resCh)
 	if err != nil {
-		log.Printf("ERROR: failed to stop unit %v: %v", u.name, err)
+		hl.Errorf("failed to stop unit %v: %v", u.name, err)
 		return err
 	}
 	res := <-resCh
 	if res != "done" && res != "skipped" {
-		log.Printf("ERROR: wrong res of stopping unit %v: %v", u.name, res)
+		hl.Errorf("wrong res of stopping unit %v: %v", u.name, res)
 		return fmt.Errorf("res is %v", res)
 	}
 
-	log.Printf("DEBUG: disabling %v", u.name)
+	hl.Debugf("disabling %v", u.name)
 	_, err = c.DisableUnitFiles([]string{u.name}, false)
 	if err != nil {
-		log.Printf("ERROR: failed to disable unit %v: %v", u.name, err)
+		hl.Errorf("failed to disable unit %v: %v", u.name, err)
 		return err
 	}
 
@@ -190,12 +215,12 @@ func (u unit) restart(c *dbus.Conn) error {
 
 	_, err := c.RestartUnit(u.name, "replace", resCh)
 	if err != nil {
-		log.Printf("ERROR: failed to restart unit %v: %v", u.name, err)
+		hl.Errorf("failed to restart unit %v: %v", u.name, err)
 		return err
 	}
 	res := <-resCh
 	if res != "done" && res != "skipped" {
-		log.Printf("ERROR: wrong res of restarting unit %v: %v", u.name, res)
+		hl.Errorf("wrong res of restarting unit %v: %v", u.name, res)
 		return fmt.Errorf("res is %v", res)
 	}
 	return nil
@@ -204,7 +229,7 @@ func (u unit) restart(c *dbus.Conn) error {
 func (u unit) reenableNow(c *dbus.Conn) error {
 	_, _, err := c.EnableUnitFiles([]string{u.name}, false, true)
 	if err != nil {
-		log.Printf("ERROR: failed to enable unit %v: %v", u.name, err)
+		hl.Errorf("failed to enable unit %v: %v", u.name, err)
 		return err
 	}
 	err = u.restart(c)
@@ -225,10 +250,10 @@ func (k keeper) disableNow(c *dbus.Conn) error {
 		return err
 	}
 
-	log.Printf("DEBUG: disabling keeper: purging datadir %s", k.datadir)
+	hl.Debugf("disabling keeper: purging datadir %s", k.datadir)
 	err = os.RemoveAll(k.datadir)
 	if err != nil {
-		log.Printf("ERROR: failed to delete keeper dir: %v", err)
+		hl.Errorf("failed to delete keeper dir: %v", err)
 		return err
 	}
 	return nil
@@ -278,7 +303,7 @@ func getLoadedUnits(ld *ladle.LadleData, dbusConn *dbus.Conn) ([]loadedUnit, err
 			continue
 		}
 
-		log.Printf("DEBUG: found our service %v, activestate %v", s.Name, s.ActiveState)
+		hl.Debugf("found our service %v, activestate %v", s.Name, s.ActiveState)
 		prop, err := dbusConn.GetUnitProperty(s.Name, "UnitFileState")
 		if err != nil {
 			return nil, err
@@ -328,6 +353,7 @@ func addStoreOptsNoBackend(env map[string]string, prefix string, c *cluster.Stor
 
 func getSpecUnits(ld *ladle.LadleData, l *ladle.NodeLayout, cd *cluster.ClusterData) []specUnit {
 	var specUnits = []specUnit{}
+	// store is ok, but there is no data for our cluster: shut down (and purge) everything
 	if l == nil {
 		return specUnits
 	}
@@ -440,7 +466,7 @@ func (su specUnit) getConfig() (map[string]string, error) {
 	c := make(map[string]string)
 	f, err := os.Open(su.envPath)
 	if err != nil {
-		log.Printf("WARNING: Failed to open env file: %v", err)
+		hl.Warnf("Failed to open env file of running unit (cluster data was removed?): %v", err)
 		return nil, err
 	}
 	defer f.Close()
@@ -517,6 +543,7 @@ func reconfigure(loadedUnits []loadedUnit, specUnits []specUnit, c *dbus.Conn) e
 
 	// now (re)start units as spec says
 	for _, su := range specUnits {
+		hl.Debugf("ensuring unit %s is running", su.getName())
 		// if unit is active and enabled, only restart if config changed;
 		// otherwise, re-enable and restart unconditionally
 		considerOk := false
@@ -528,30 +555,31 @@ func reconfigure(loadedUnits []loadedUnit, specUnits []specUnit, c *dbus.Conn) e
 		}
 
 		if considerOk {
-			log.Printf("DEBUG: checking config equality")
+			hl.Debugf("checking config equality")
 			currCfg, err := su.getConfig()
 			if err != nil || !mapsEqual(currCfg, su.env) {
 				err = su.writeConfig()
 				if err != nil {
-					log.Printf("ERROR: failed to write config: %v", err)
+					hl.Errorf("failed to write config: %v", err)
 					return err
 				}
 				err = su.restart(c)
 				if err != nil {
-					log.Printf("ERROR: failed to restart unit: %v")
+					hl.Errorf("failed to restart unit: %v")
 					return err
 				}
 			}
+			hl.Debugf("unit is already ok")
 		} else {
-			log.Printf("DEBUG: (re)enabling unit %v", spew.Sdump(su))
+			hl.Debugf("(re)enabling unit %v", spew.Sdump(su))
 			err := su.writeConfig()
 			if err != nil {
-				log.Printf("ERROR: failed to write config: %v", err)
+				hl.Errorf("failed to write config: %v", err)
 				return err
 			}
 			err = su.reenableNow(c)
 			if err != nil {
-				log.Printf("ERROR: failed to reenable unit: %v", err)
+				hl.Errorf("failed to reenable unit: %v", err)
 				return err
 			}
 		}
@@ -568,28 +596,28 @@ func bowlReconfigure(ctx context.Context, b *bowlState) {
 
 	ld, _, cd, _, err := b.ls.GetLadleAndClusterData(ctx)
 	if err != nil {
-		log.Printf("ERROR: %v", err)
+		hl.Errorf("%v", err)
 		goto retry
 	}
 	if ld != nil && cd == nil {
-		log.Printf("ERROR: ladledata exists, but clusterdata not")
+		hl.Errorf("ladledata exists, but clusterdata not")
 		goto retry
 	}
 	if ld != nil {
 		// might be nil
 		l = ld.Layout[hostname]
 	}
-	log.Printf("DEBUG: ld is %v, l %v", spew.Sdump(ld), spew.Sdump(l))
+	hl.Debugf("ld is %v, l %v", spew.Sdump(ld), spew.Sdump(l))
 
 	loadedUnits, err = getLoadedUnits(ld, b.dbusConn)
 	if err != nil {
-		log.Printf("ERROR: %v", err)
+		hl.Errorf("%v", err)
 		goto retry
 	}
 
 	specUnits = getSpecUnits(ld, l, cd)
 
-	log.Printf("DEBUG: reconfiguring")
+	hl.Debugf("reconfiguring")
 	err = reconfigure(loadedUnits, specUnits, b.dbusConn)
 	if err != nil {
 		goto retry
