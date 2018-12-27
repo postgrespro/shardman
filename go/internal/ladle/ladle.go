@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx"
@@ -423,6 +424,138 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *hplog.Logger, nodes []st
 				return err
 			}
 		}
+	}
+
+	return nil
+}
+
+// make sure that stolon instances are created for all replication groups
+func (ls *LadleStore) FixRepGroups(ctx context.Context, hl *hplog.Logger) error {
+	ldata, _, cldata, _, err := ls.GetLadleAndClusterData(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot get ladle/cluster data: %v", err)
+	}
+	if ldata == nil {
+		return fmt.Errorf("no data for cluster %v", ls.ClusterName)
+	}
+
+	rgs, _, err := ls.GetRepGroups(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get rgs: %v", err)
+	}
+
+	// we will check each rg several times, but that's not expensive
+	for _, layout := range ldata.Layout {
+		for _, k := range layout.Keepers {
+			rg := cluster.RepGroup{
+				StolonName: k.Id.RepGroup,
+				// always use single (hodgepodge) store
+				StoreConnInfo: cluster.StoreConnInfo{Endpoints: ""},
+				StorePrefix:   "stolon/cluster",
+			}
+
+			// Create stolon instance, if not yet. Actually,
+			// currently they always exist...
+			ss := cluster.NewStolonStoreFromExisting(&rg, ls.Store)
+			scldata, err := ss.GetClusterData(ctx)
+			if err != nil {
+				return fmt.Errorf("error getting stolon cluster data: %v", err)
+			}
+			if scldata == nil {
+				hl.Infof("Creating Stolon instance %v", rg.StolonName)
+				err = cluster.StolonInit(ldata.Spec.StoreConnInfo, &rg, &cldata.Spec.StolonSpec, ldata.Spec.StolonBinPath)
+				if err != nil {
+					return err
+				}
+			}
+
+			// and register it, if not yet
+			found := false
+			for _, existingRg := range rgs {
+				if existingRg.StolonName == rg.StolonName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				hl.Infof("Adding repgroup %v", rg.StolonName)
+				err = commands.AddRepGroup(ctx, hl, ls.ClusterStore, ldata.Spec.StoreConnInfo, &rg)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (ls *LadleStore) RmNodes(ctx context.Context, hl *hplog.Logger, nodes []string) error {
+	ldata, _, err := ls.GetLadleData(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot get ladle/cluster data: %v", err)
+	}
+	if ldata == nil {
+		return fmt.Errorf("no data for cluster %v", ls.ClusterName)
+	}
+
+	// First, calculate which clovers we are going to remove
+	rmClovers := map[int][]string{}
+	for cloverId, clover := range ldata.Clovers {
+		// remove this clover?
+		remove := false
+	CloverMembersLoop:
+		for _, node := range clover {
+			for _, n := range nodes {
+				if n == node {
+					remove = true
+					break CloverMembersLoop
+				}
+			}
+		}
+		if remove {
+			hl.Infof("Removing clover %v with members %v", cloverId, strings.Join(clover, ", "))
+			rmClovers[cloverId] = clover
+		}
+	}
+
+	rgs, _, err := ls.GetRepGroups(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get rgs: %v", err)
+	}
+
+	// And actually remove
+	for cloverId, clover := range rmClovers {
+		delete(ldata.Clovers, cloverId)
+		// remove repgroup for which this member is master, if it exists
+		for _, master := range clover {
+			rgName := fmt.Sprintf("clover-%d-%s", cloverId, master)
+
+			repGroupExists := false
+			for _, existingRg := range rgs {
+				if existingRg.StolonName == rgName {
+					repGroupExists = true
+					break
+				}
+			}
+
+			if repGroupExists {
+				hl.Infof("Removing repgroup %v", rgName)
+				err = commands.RmRepGroup(ctx, hl, ls.ClusterStore, rgName)
+				if err != nil {
+					return err
+				}
+			}
+
+			// and remove member from metadata
+			delete(ldata.Layout, master)
+		}
+	}
+
+	// push updated ldata to the store
+	err = ls.PutLadleData(ctx, ldata)
+	if err != nil {
+		return fmt.Errorf("failed to save ladle data in store: %v", err)
 	}
 
 	return nil

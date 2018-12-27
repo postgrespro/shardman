@@ -26,11 +26,11 @@ var rootCmd = &cobra.Command{
 	Version: cmdcommon.HodgepodgeVersion,
 	Short:   "hodgepodge command line client. Note: you must always run at most one instance of hodgepodgectl at time.",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
+		hl = hplog.GetLoggerWithLevel(logLevel)
+
 		if err := cmdcommon.CheckConfig(&cfg); err != nil {
 			hl.Fatalf(err.Error())
 		}
-
-		hl = hplog.GetLoggerWithLevel(logLevel)
 	},
 	// bare command does nothing
 }

@@ -88,9 +88,7 @@ type Endpoint struct {
 	Port    string
 }
 
-// if no master available (but store is ok), returns nil, nil
-func (ss *StolonStore) GetMaster(ctx context.Context) (*Endpoint, error) {
-	var master = &Endpoint{}
+func (ss *StolonStore) GetClusterData(ctx context.Context) (*StolonClusterData, error) {
 	var clusterData StolonClusterData
 
 	path := filepath.Join(ss.storePath, "clusterdata")
@@ -104,6 +102,20 @@ func (ss *StolonStore) GetMaster(ctx context.Context) (*Endpoint, error) {
 	if err := json.Unmarshal(pair.Value, &clusterData); err != nil {
 		return nil, err
 	}
+	return &clusterData, nil
+}
+
+// if no master available or there is no cluster (but store is ok), returns nil, nil
+func (ss *StolonStore) GetMaster(ctx context.Context) (*Endpoint, error) {
+	clusterData, err := ss.GetClusterData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if clusterData == nil {
+		return nil, nil
+	}
+
+	var master = &Endpoint{}
 	if db, ok := clusterData.DBs[clusterData.Proxy.Spec.MasterDBUID]; ok {
 		master.Address = db.Status.ListenAddress
 		master.Port = db.Status.Port

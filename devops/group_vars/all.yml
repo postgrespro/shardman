@@ -49,3 +49,4 @@ hodgepodge_src: "{{ ansible_env.HOME }}/hodgepodge"
 
 cluster_name: haha
 data_dir: "{{ ansible_env.HOME }}/hodgepodge_data"
+bowl_log_level: debug

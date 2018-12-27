@@ -43,6 +43,8 @@ var rootCmd = &cobra.Command{
 	Version: cmdcommon.HodgepodgeVersion,
 	Short:   "deployment daemon for hodgepodge",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
+		hl = hplog.GetLoggerWithLevel(logLevel)
+
 		if err := cmdcommon.CheckConfig(&cfg); err != nil {
 			hl.Fatalf("%v", err)
 		}
@@ -77,8 +79,6 @@ type bowlState struct {
 const retryStoreConnInterval = 2 * time.Second
 
 func bowlMain(c *cobra.Command, args []string) {
-	hl = hplog.GetLoggerWithLevel(logLevel)
-
 	var b = &bowlState{
 		retryTimer: time.NewTimer(0),
 	}

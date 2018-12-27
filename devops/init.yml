@@ -19,6 +19,14 @@
     - bowl_unit
     - units
 
+  - name: prepare bowls env file
+    template:
+      src: templates/bowl.env.j2
+      dest: "{{ data_dir }}/bowl-{{ cluster_name }}.env"
+    tags:
+    - bowl_env
+    - units
+
   - name: instantiate monitor unit file
     template:
       src: templates/hodgepodge-monitor.service.j2
@@ -72,13 +80,6 @@
     file: path="{{ data_dir }}" state=directory
     tags:
       - create_data_dir
-
-  - name: prepare bowls env file
-    template:
-      src: templates/bowl.env.j2
-      dest: "{{ data_dir }}/bowl-{{ cluster_name }}.env"
-    tags:
-      bowl_env
 
   - name: start bowls
     systemd:

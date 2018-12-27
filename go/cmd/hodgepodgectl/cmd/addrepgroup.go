@@ -4,7 +4,6 @@ package cmd
 
 import (
 	"context"
-	"log"
 
 	"github.com/spf13/cobra"
 
@@ -42,12 +41,12 @@ func init() {
 func addRepGroup(cmd *cobra.Command, args []string) {
 	cs, err := cluster.NewClusterStore(&cfg)
 	if err != nil {
-		log.Fatalf("failed to create store: %v", err)
+		hl.Fatalf("failed to create store: %v", err)
 	}
 	defer cs.Close()
 
 	err = commands.AddRepGroup(context.Background(), hl, cs, &cfg.StoreConnInfo, &newrg)
 	if err != nil {
-		log.Fatalf("addrepgroup failed: %v", err)
+		hl.Fatalf("addrepgroup failed: %v", err)
 	}
 }

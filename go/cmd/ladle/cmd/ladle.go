@@ -24,8 +24,10 @@ var rootCmd = &cobra.Command{
 	Version: cmdcommon.HodgepodgeVersion,
 	Short:   "deployment tool for hodgepodge",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
+		hl = hplog.GetLoggerWithLevel(logLevel)
+
 		if err := cmdcommon.CheckConfig(&cfg); err != nil {
-			log.Fatalf("%v", err)
+			hl.Fatalf("%v", err)
 		}
 	},
 	// bare command does nothing
@@ -33,8 +35,6 @@ var rootCmd = &cobra.Command{
 
 // Entry point
 func Execute() {
-	hl = hplog.GetLoggerWithLevel(logLevel)
-
 	if err := utils.SetFlagsFromEnv(rootCmd.PersistentFlags(), "HPLADLE"); err != nil {
 		log.Fatalf("%v", err)
 	}

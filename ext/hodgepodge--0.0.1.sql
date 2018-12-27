@@ -301,9 +301,7 @@ begin
   for rs in select slot_name from pg_replication_slots where slot_name like 'hp_copy_%' and slot_type = 'logical' loop
     perform hodgepodge.drop_repslot(rs.slot_name, true);
   end loop;
-  raise warning 'going to drop pubies';
   for pub in select pubname from pg_publication where pubname like 'hp_copy_%' loop
-    raise warning 'drooping pub %', pub.pubname;
     execute format('drop publication %I', pub.pubname);
   end loop;
 
