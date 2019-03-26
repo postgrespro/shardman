@@ -45,9 +45,10 @@ stolon_version_tag: a3b812a8dea2f69d3be3
 stolon_src: "{{ ansible_env.HOME }}/stolon"
 
 # download shardman from repo or from local dir
-shardman_use_repo: True
+# False for development
+shardman_use_repo: False
 shardman_repo: https://github.com/postgrespro/shardman.git
-# when copied from local dir (slash is the end is important)
+# when copied from local dir (slash in the end is important)
 shardman_local_dir: /home/ars/postgres/shardman/
 shardman_version_tag: master
 shardman_src: "{{ ansible_env.HOME }}/shardman"

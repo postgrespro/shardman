@@ -33,5 +33,5 @@ make -C ~/postgres/shardman/ext/ clean && make -C ~/postgres/shardman/ext/ insta
 
 ###################################
 
-shardman-ladle --cluster-name haha init -f hpspec.json
+shardman-ladle --cluster-name haha init -f shmnspec.json
 shardman-ladle --cluster-name haha addnodes -n vg1,vg2,vg3

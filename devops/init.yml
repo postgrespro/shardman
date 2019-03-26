@@ -19,6 +19,16 @@
     - bowl_unit
     - units
 
+  - name: destoy data dir
+    file: path="{{ data_dir }}" state=absent
+    tags:
+      - destory_data_dir
+
+  - name: create data dir
+    file: path="{{ data_dir }}" state=directory
+    tags:
+      - create_data_dir
+
   - name: prepare bowls env file
     template:
       src: templates/bowl.env.j2
@@ -70,16 +80,6 @@
       dest: "{{ ansible_env.HOME }}/shmnspec.json"
     tags:
       instantiate_spec
-
-  - name: destoy data dir
-    file: path="{{ data_dir }}" state=absent
-    tags:
-      - destory_data_dir
-
-  - name: create data dir
-    file: path="{{ data_dir }}" state=directory
-    tags:
-      - create_data_dir
 
   - name: start bowls
     systemd:
