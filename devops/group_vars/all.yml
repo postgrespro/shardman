@@ -12,8 +12,8 @@ tmpfs: true
 
 ### provision things
 
-# golang_link: https://dl.google.com/go/go1.11.2.linux-amd64.tar.gz
-golang_link: https://dl.google.com/go/go1.11.4.linux-amd64.tar.gz
+golang_link: https://dl.google.com/go/go1.11.2.linux-amd64.tar.gz
+# golang_link: https://dl.google.com/go/go1.11.4.linux-amd64.tar.gz
 # golang_link: https://dl.google.com/go/go1.11.6.linux-amd64.tar.gz
 # golang_link: https://dl.google.com/go/go1.12.1.linux-amd64.tar.gz
 
@@ -39,7 +39,9 @@ pg_inst: "{{pg_prefix}}/install"
 # stolon_repo: https://github.com/sorintlab/stolon.git
 stolon_repo: https://github.com/postgrespro/stolon.git
 # stolon_version_tag: master
-stolon_version_tag: 25c0fce06fc37d02eb5
+# stolon_version_tag: 25c0fce06fc37d02eb5
+# keeper-priority
+stolon_version_tag: a3b812a8dea2f69d3be3
 stolon_src: "{{ ansible_env.HOME }}/stolon"
 
 # download shardman from repo or from local dir

@@ -399,6 +399,14 @@ func getSpecUnits(ld *ladle.LadleData, l *ladle.NodeLayout, cd *cluster.ClusterD
 
 			env[prefix+"UID"] = fmt.Sprintf("keeper_%d", k.Id.Uid)
 
+			var priority int
+			if k.Preferred {
+				priority = 1
+			} else {
+				priority = 0
+			}
+			env[prefix+"PRIORITY"] = strconv.Itoa(priority)
+
 			specUnit := specUnit{unitI: keeperUnit, env: env, envPath: envPath}
 			specUnits = append(specUnits, specUnit)
 		}
