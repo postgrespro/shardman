@@ -91,7 +91,7 @@
       start_bowl
 
   - name: init cluster
-    command: shardman-ladle --store-endpoints {{ lookup('template', 'etcd_endpoints.j2') }} --cluster-name {{ cluster_name }} init -f hpspec.json
+    command: shardman-ladle --store-endpoints {{ lookup('template', 'etcd_endpoints.j2') }} --cluster-name {{ cluster_name }} init -f shmnspec.json
     run_once: true
     tags:
     - init

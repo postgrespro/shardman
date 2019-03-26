@@ -5,14 +5,16 @@
   git: repo="{{ stolon_repo }}"
     dest="{{ stolon_src }}"
     version="{{ stolon_version_tag }}"
-    depth=1
+    depth=20
     accept_hostkey=True
     force=yes
+  tags:
+    - stolon
 
 - name: build stolon
   command: "{{ stolon_src }}/build"
   tags:
-    - build_stolon
+    - stolon
 
 - name: add stolon binaries to PATH in .bashrc
   lineinfile:
@@ -20,3 +22,5 @@
     line: 'export PATH=$PATH:{{ stolon_src }}/bin'
     # important, otherwise not read in non-interactive sessions
     insertbefore: BOF
+  tags:
+    - stolon

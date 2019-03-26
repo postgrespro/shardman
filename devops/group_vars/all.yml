@@ -12,7 +12,10 @@ tmpfs: true
 
 ### provision things
 
-golang_link: https://dl.google.com/go/go1.11.2.linux-amd64.tar.gz
+# golang_link: https://dl.google.com/go/go1.11.2.linux-amd64.tar.gz
+golang_link: https://dl.google.com/go/go1.11.4.linux-amd64.tar.gz
+# golang_link: https://dl.google.com/go/go1.11.6.linux-amd64.tar.gz
+# golang_link: https://dl.google.com/go/go1.12.1.linux-amd64.tar.gz
 
 etcd_link: https://github.com/etcd-io/etcd/releases/download/v3.3.10/etcd-v3.3.10-linux-amd64.tar.gz
 etcd_dirname: 'etcd-v3.3.10-linux-amd64'
@@ -33,8 +36,10 @@ pg_src: "{{pg_prefix}}/src"
 cflags: "-O2"
 pg_inst: "{{pg_prefix}}/install"
 
-stolon_repo: https://github.com/sorintlab/stolon.git
-stolon_version_tag: master
+# stolon_repo: https://github.com/sorintlab/stolon.git
+stolon_repo: https://github.com/postgrespro/stolon.git
+# stolon_version_tag: master
+stolon_version_tag: 25c0fce06fc37d02eb5
 stolon_src: "{{ ansible_env.HOME }}/stolon"
 
 # download shardman from repo or from local dir

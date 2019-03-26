@@ -63,7 +63,7 @@
   tags:
     etcd_service
 
-- name: bla
+- name: systemctl --user daemon-reload
   command: systemctl --user daemon-reload
   tags:
     etcd_service
