@@ -37,16 +37,16 @@ stolon_repo: https://github.com/sorintlab/stolon.git
 stolon_version_tag: master
 stolon_src: "{{ ansible_env.HOME }}/stolon"
 
-# download hodgepodge from repo or from local dir
-hodgepodge_use_repo: True
-hodgepodge_repo: https://github.com/arssher/hodgepodge.git
+# download shardman from repo or from local dir
+shardman_use_repo: True
+shardman_repo: https://github.com/postgrespro/shardman.git
 # when copied from local dir (slash is the end is important)
-hodgepodge_local_dir: /home/ars/postgres/hodgepodge/
-hodgepodge_version_tag: master
-hodgepodge_src: "{{ ansible_env.HOME }}/hodgepodge"
+shardman_local_dir: /home/ars/postgres/shardman/
+shardman_version_tag: master
+shardman_src: "{{ ansible_env.HOME }}/shardman"
 
 ### init things
 
 cluster_name: haha
-data_dir: "{{ ansible_env.HOME }}/hodgepodge_data"
+data_dir: "{{ ansible_env.HOME }}/shardman_data"
 bowl_log_level: debug

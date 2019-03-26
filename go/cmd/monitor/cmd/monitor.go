@@ -21,11 +21,11 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	cmdcommon "postgrespro.ru/hodgepodge/cmd"
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/hplog"
-	"postgrespro.ru/hodgepodge/internal/pg"
-	"postgrespro.ru/hodgepodge/internal/utils"
+	cmdcommon "postgrespro.ru/shardman/cmd"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/hplog"
+	"postgrespro.ru/shardman/internal/pg"
+	"postgrespro.ru/shardman/internal/utils"
 )
 
 // Here we will store args
@@ -38,9 +38,9 @@ var logLevel string
 
 var hl *hplog.Logger
 
-var hpmonCmd = &cobra.Command{
-	Use: "hpmon",
-	Short: `Hodgepodge monitor. It
+var shmonCmd = &cobra.Command{
+	Use: "shardman-monitor",
+	Short: `Shardman monitor. It
   * Ensures that all replication groups are aware of current locations of other repgroups.
   * Resolves 2PC (distributed) transactions.
   * Resolves deadlocks.
@@ -56,25 +56,25 @@ Running several instances is safe.
 			hl.Fatalf(fmt.Sprintf("wrong deadlock interval: %v", err.Error()))
 		}
 	},
-	Run: hpmon,
+	Run: shmon,
 }
 
 // Entry point
 func Execute() {
-	if err := utils.SetFlagsFromEnv(hpmonCmd.PersistentFlags(), "HPMONITOR"); err != nil {
+	if err := utils.SetFlagsFromEnv(shmonCmd.PersistentFlags(), "SHMNMONITOR"); err != nil {
 		log.Fatalf("%v", err)
 	}
 
-	if err := hpmonCmd.Execute(); err != nil {
+	if err := shmonCmd.Execute(); err != nil {
 		log.Fatalf(err.Error())
 	}
 }
 
 func init() {
-	cmdcommon.AddCommonFlags(hpmonCmd, &cfg, &logLevel)
-	hpmonCmd.PersistentFlags().BoolVar(&noXR, "no-xact-resolver", false, "don't run xact resolver")
-	hpmonCmd.PersistentFlags().BoolVar(&noDD, "no-deadlock-detector", false, "don't run deadlock detector")
-	hpmonCmd.PersistentFlags().StringVar(&checkDeadlockIntervalRaw, "deadlock-timeout", "2s", "interval between deadlock checks. Accepted formats are the same as in PostgreSQL's GUCs; default unit is ms, as in PG's deadlock_timeout")
+	cmdcommon.AddCommonFlags(shmonCmd, &cfg, &logLevel)
+	shmonCmd.PersistentFlags().BoolVar(&noXR, "no-xact-resolver", false, "don't run xact resolver")
+	shmonCmd.PersistentFlags().BoolVar(&noDD, "no-deadlock-detector", false, "don't run deadlock detector")
+	shmonCmd.PersistentFlags().StringVar(&checkDeadlockIntervalRaw, "deadlock-timeout", "2s", "interval between deadlock checks. Accepted formats are the same as in PostgreSQL's GUCs; default unit is ms, as in PG's deadlock_timeout")
 
 	// randomize seed
 	rand.Seed(time.Now().Unix())
@@ -104,7 +104,7 @@ func parseDuration(raw string) (time.Duration, error) {
 	return modifier * time.Duration(n), nil
 }
 
-type hpMonState struct {
+type shMonState struct {
 	cs                  *cluster.ClusterStore
 	ctx                 context.Context
 	workers             map[int]chan clusterState // rgid is the key
@@ -124,10 +124,10 @@ type repGroupState struct {
 
 // TODO: we should we add ctx to all pg's commands to prevent any worker
 // hanging, blocking everything
-func hpmon(c *cobra.Command, args []string) {
+func shmon(c *cobra.Command, args []string) {
 	hl = hplog.GetLoggerWithLevel(logLevel)
 
-	var state hpMonState
+	var state shMonState
 	state.workers = make(map[int]chan clusterState)
 	state.xact_resolverch = make(chan clusterState)
 	state.deadlock_detectorch = make(chan clusterState)
@@ -150,11 +150,11 @@ func hpmon(c *cobra.Command, args []string) {
 
 	// TODO: watch instead of polling
 	reloadStoreTimerCh := time.NewTimer(0).C
-	hl.Infof("hpmon started")
+	hl.Infof("shardman-montitor started")
 	for {
 		select {
 		case <-ctx.Done():
-			hl.Infof("stopping hpmon")
+			hl.Infof("stopping shardman-monitor")
 			state.wg.Wait()
 			return
 
@@ -171,7 +171,7 @@ func sigHandler(sigs chan os.Signal, cancel context.CancelFunc) {
 	cancel()
 }
 
-func reloadStore(state *hpMonState) {
+func reloadStore(state *shMonState) {
 	hl.Debugf("reloadStore")
 	var err error
 	var rgs map[int]*cluster.RepGroup
@@ -966,7 +966,7 @@ func deadlockDetectorWorker(rgid int, in <-chan interface{}, out chan<- interfac
 			var err error
 			var rows *pgx.Rows
 			var edges = make([]edge, 0, 128)
-			rows, err = conn.Query("select * from hodgepodge.lock_graph_native_types")
+			rows, err = conn.Query("select * from shardman.lock_graph_native_types")
 			if err != nil {
 				goto ConnError
 			}

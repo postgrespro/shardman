@@ -20,11 +20,11 @@ import (
 	"github.com/spf13/cobra"
 	"go.etcd.io/etcd/clientv3"
 
-	cmdcommon "postgrespro.ru/hodgepodge/cmd"
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/hplog"
-	"postgrespro.ru/hodgepodge/internal/ladle"
-	"postgrespro.ru/hodgepodge/internal/utils"
+	cmdcommon "postgrespro.ru/shardman/cmd"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/hplog"
+	"postgrespro.ru/shardman/internal/ladle"
+	"postgrespro.ru/shardman/internal/utils"
 )
 
 // Here we will store args
@@ -39,9 +39,9 @@ var hl *hplog.Logger
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:     "hodgepodge-bowl",
-	Version: cmdcommon.HodgepodgeVersion,
-	Short:   "deployment daemon for hodgepodge",
+	Use:     "shardman-bowl",
+	Version: cmdcommon.ShardmanVersion,
+	Short:   "deployment daemon for shardman",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
 		hl = hplog.GetLoggerWithLevel(logLevel)
 
@@ -91,10 +91,10 @@ func bowlMain(c *cobra.Command, args []string) {
 	defer b.dbusConn.Close()
 
 	// some globals
-	keeperUnitRegexp = regexp.MustCompile(`^hodgepodge-keeper-` + cfg.ClusterName + `@(.*)-(\d+).service$`)
-	ourUnitsRegexp = regexp.MustCompile(`^(hodgepodge-keeper-` + cfg.ClusterName +
-		`|hodgepodge-sentinel-` + cfg.ClusterName + `|hodgepodge-proxy-` + cfg.ClusterName +
-		`|hodgepodge-monitor-` + cfg.ClusterName + `)`)
+	keeperUnitRegexp = regexp.MustCompile(`^shardman-keeper-` + cfg.ClusterName + `@(.*)-(\d+).service$`)
+	ourUnitsRegexp = regexp.MustCompile(`^(shardman-keeper-` + cfg.ClusterName +
+		`|shardman-sentinel-` + cfg.ClusterName + `|shardman-proxy-` + cfg.ClusterName +
+		`|shardman-monitor-` + cfg.ClusterName + `)`)
 	hostname, err = os.Hostname()
 	if err != nil {
 		hl.Fatalf("failed to get hostname: %v", err)
@@ -273,11 +273,11 @@ type specUnit struct {
 }
 
 func formTemplateUnitName(bin string, id string) string {
-	return fmt.Sprintf("hodgepodge-%s-%s@%s.service", bin, cfg.ClusterName, id)
+	return fmt.Sprintf("shardman-%s-%s@%s.service", bin, cfg.ClusterName, id)
 }
 
 func formMonitorUnitName() string {
-	return fmt.Sprintf("hodgepodge-monitor-%s.service", cfg.ClusterName)
+	return fmt.Sprintf("shardman-monitor-%s.service", cfg.ClusterName)
 }
 
 func formKeeperDataDir(keeperId ladle.KeeperId) string {
@@ -313,7 +313,7 @@ func getLoadedUnits(ld *ladle.LadleData, dbusConn *dbus.Conn) ([]loadedUnit, err
 
 		unit := unit{name: s.Name}
 		var uI unitI = unit
-		if strings.HasPrefix(s.Name, "hodgepodge-keeper") {
+		if strings.HasPrefix(s.Name, "shardman-keeper") {
 			var datadir string
 			matches := keeperUnitRegexp.FindStringSubmatch(s.Name)
 			if len(matches) == 3 && ld != nil {
@@ -451,7 +451,7 @@ func getSpecUnits(ld *ladle.LadleData, l *ladle.NodeLayout, cd *cluster.ClusterD
 		envFilename := formEnvFilename("monitor", "")
 		envPath := filepath.Join(ld.Spec.DataDir, envFilename)
 		env := make(map[string]string)
-		prefix := "HPMONITOR_"
+		prefix := "SHMNMONITOR_"
 		addStoreOpts(env, prefix, ld.Spec.StoreConnInfo, cfg.ClusterName)
 		// xxx deadlock timeout
 

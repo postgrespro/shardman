@@ -19,10 +19,9 @@
   tags: ars
 
 - name: install emacs & other stuff for Arseny
-  apt: name="{{packages}}" state=installed
+  apt: name="{{packages}}" state=present
   vars:
     packages:
-    - x11-xkb-utilts
     - emacs25
   become: yes
   when: tags_not_specified is not defined and ansible_os_family == "Debian"

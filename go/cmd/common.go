@@ -6,12 +6,12 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/store"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/store"
 )
 
 // set in Makefile
-var HodgepodgeVersion = "not defined during build"
+var ShardmanVersion = "not defined during build"
 
 func AddCommonFlags(cmd *cobra.Command, cfg *cluster.ClusterStoreConnInfo, logLevel *string) {
 	cmd.PersistentFlags().StringVar(&cfg.ClusterName, "cluster-name", "", "cluster name")

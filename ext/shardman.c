@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *
- * hodgepodge.c
+ * shardman.c
  *
  * Copyright (c) 2018, Postgres Professional
  *
@@ -22,7 +22,7 @@
 #include "utils/rel.h"
 #include "utils/guc.h"
 
-#include "hodgepodge.h"
+#include "shardman.h"
 #include "meta.h"
 #include "postgres_fdw/postgres_fdw.h"
 
@@ -50,7 +50,7 @@ static void BcstAll(char *sql);
 static void Bcst(char *sql);
 static void ExServer(Oid serverid, char *sql);
 static void do_sql_command(ConnCacheEntry *entry, char *sql);
-static bool HodgepodgeLoaded(void);
+static bool ShardmanLoaded(void);
 
 static ProcessUtility_hook_type PreviousProcessUtilityHook;
 
@@ -62,7 +62,7 @@ void
 _PG_init()
 {
 	DefineCustomIntVariable(
-		"hodgepodge.rgid",
+		"shardman.rgid",
 		"My replication group id",
 		NULL,
 		&MyRgid,
@@ -72,9 +72,9 @@ _PG_init()
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		"hodgepodge.broadcast_utility",
+		"shardman.broadcast_utility",
 		"When off, no utility statements are broadcasted",
-		"hodgepodge will broadcast to all repgroups utility statements which it supports and for which it does make sense. You can disable/enable this at any time.",
+		"shardman will broadcast to all repgroups utility statements which it supports and for which it does make sense. You can disable/enable this at any time.",
 		&broadcast_utility,
 		true,
 		PGC_USERSET,
@@ -106,7 +106,7 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 	int stmt_len = pstmt->stmt_len > 0 ? pstmt->stmt_len : strlen(queryString + stmt_start);
 	char *stmt_string = palloc(stmt_len + 1);
 
-	if (!HodgepodgeLoaded())
+	if (!ShardmanLoaded())
 	{
 		if (PreviousProcessUtilityHook != NULL)
 		{
@@ -188,7 +188,7 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 					{
 						Node	   *object = lfirst(cell1);
 
-						if (strcmp(strVal((Value *) object), "hodgepodge") == 0)
+						if (strcmp(strVal((Value *) object), "shardman") == 0)
 							goto end_of_switch;
 					}
 				} else if (stmt->removeType == OBJECT_FOREIGN_SERVER)
@@ -446,8 +446,8 @@ static void do_sql_command(ConnCacheEntry *entry, char *sql)
 }
 
 /* TODO: caching */
-static bool HodgepodgeLoaded()
+static bool ShardmanLoaded()
 {
-	Oid extension_oid = get_extension_oid("hodgepodge", true);
+	Oid extension_oid = get_extension_oid("shardman", true);
 	return extension_oid != InvalidOid;
 }

@@ -14,8 +14,8 @@ import (
 	etcdclientv3 "go.etcd.io/etcd/clientv3"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 
-	"postgrespro.ru/hodgepodge/internal/store"
-	tlswrap "postgrespro.ru/hodgepodge/internal/tls"
+	"postgrespro.ru/shardman/internal/store"
+	tlswrap "postgrespro.ru/shardman/internal/tls"
 )
 
 type ClusterStore struct {
@@ -63,7 +63,7 @@ func NewClusterStore(cfg *ClusterStoreConnInfo) (*ClusterStore, error) {
 		return nil, err
 	}
 	etcdstore := store.NewEtcdV3Store(cli)
-	storePath := filepath.Join("hodgepodge", cfg.ClusterName)
+	storePath := filepath.Join("shardman", cfg.ClusterName)
 	return &ClusterStore{StorePath: storePath, Store: etcdstore, ClusterName: cfg.ClusterName}, nil
 }
 

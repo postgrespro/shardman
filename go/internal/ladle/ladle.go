@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx"
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/cluster/commands"
-	"postgrespro.ru/hodgepodge/internal/hplog"
-	"postgrespro.ru/hodgepodge/internal/pg"
-	"postgrespro.ru/hodgepodge/internal/store"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/cluster/commands"
+	"postgrespro.ru/shardman/internal/hplog"
+	"postgrespro.ru/shardman/internal/pg"
+	"postgrespro.ru/shardman/internal/store"
 )
 
 const (
@@ -44,7 +44,7 @@ const (
 
 // Configuration of the cluster defining ladle behaviour
 type LadleSpec struct {
-	// hodgepodge monitor and stolon daemons need to know how to get to the
+	// shardman monitor and stolon daemons need to know how to get to the
 	// store; we keep this info here. For convenience, during init it is
 	// copied from usual store conn arguments if not specified in spec file
 	// directly
@@ -65,7 +65,7 @@ type LadleSpec struct {
 	// starting from which port to assign ports to keepers
 	KeepersInitialPort int
 
-	// how many instances of hodgepodge-monitor to run
+	// how many instances of shardman-monitor to run
 	MonitorsNum *int
 
 	ProxyPort int
@@ -301,7 +301,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *hplog.Logger, nodes []st
 			rgName := fmt.Sprintf("clover-%d-%s", newCloverId, master)
 			rg := cluster.RepGroup{
 				StolonName: rgName,
-				// always use single (hodgepodge) store
+				// always use single (shardman) store
 				StoreConnInfo: cluster.StoreConnInfo{Endpoints: ""},
 				StorePrefix:   "stolon/cluster",
 			}
@@ -358,7 +358,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *hplog.Logger, nodes []st
 			rgName := fmt.Sprintf("clover-%d-%s", cloverId, master)
 			rg := cluster.RepGroup{
 				StolonName: rgName,
-				// always use single (hodgepodge) store
+				// always use single (shardman) store
 				StoreConnInfo: cluster.StoreConnInfo{Endpoints: ""},
 				StorePrefix:   "stolon/cluster",
 			}
@@ -415,7 +415,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *hplog.Logger, nodes []st
 			rgName := fmt.Sprintf("clover-%d-%s", cloverId, master)
 			rg := cluster.RepGroup{
 				StolonName: rgName,
-				// always use single (hodgepodge) store
+				// always use single (shardman) store
 				StoreConnInfo: cluster.StoreConnInfo{Endpoints: ""},
 				StorePrefix:   "stolon/cluster",
 			}
@@ -449,7 +449,7 @@ func (ls *LadleStore) FixRepGroups(ctx context.Context, hl *hplog.Logger) error 
 		for _, k := range layout.Keepers {
 			rg := cluster.RepGroup{
 				StolonName: k.Id.RepGroup,
-				// always use single (hodgepodge) store
+				// always use single (shardman) store
 				StoreConnInfo: cluster.StoreConnInfo{Endpoints: ""},
 				StorePrefix:   "stolon/cluster",
 			}

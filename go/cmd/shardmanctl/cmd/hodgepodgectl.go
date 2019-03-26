@@ -8,10 +8,10 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	cmdcommon "postgrespro.ru/hodgepodge/cmd"
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/hplog"
-	"postgrespro.ru/hodgepodge/internal/utils"
+	cmdcommon "postgrespro.ru/shardman/cmd"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/hplog"
+	"postgrespro.ru/shardman/internal/utils"
 )
 
 // Here we will store args
@@ -22,9 +22,9 @@ var hl *hplog.Logger
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:     "hodgepodgectl",
-	Version: cmdcommon.HodgepodgeVersion,
-	Short:   "hodgepodge command line client. Note: you must always run at most one instance of hodgepodgectl at time.",
+	Use:     "shardmanctl",
+	Version: cmdcommon.ShardmanVersion,
+	Short:   "shardman command line client. Note: you must always run at most one instance of shardmanctl at time.",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
 		hl = hplog.GetLoggerWithLevel(logLevel)
 

@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"postgrespro.ru/hodgepodge/internal/cluster"
+	"postgrespro.ru/shardman/internal/cluster"
 )
 
 // store args here

@@ -1,4 +1,4 @@
-module postgrespro.ru/hodgepodge
+module postgrespro.ru/shardman
 
 require (
 	github.com/coreos/etcd v3.3.10+incompatible // indirect

@@ -31,46 +31,46 @@
 #define Anum_parts_pnum						2
 #define Anum_parts_rgid						3
 
-static Oid HpNamespaceOid(void);
+static Oid ShardmanNamespaceOid(void);
 static Oid RepgroupsIndexOid(void);
 static Oid ShardedTablesOid(void);
 static Oid PartsOid(void);
 static Oid PartsIndexOid(void);
 
 /* TODO: caching */
-static Oid HpNamespaceOid(void)
+static Oid ShardmanNamespaceOid(void)
 {
-	return get_namespace_oid("hodgepodge", false);
+	return get_namespace_oid("shardman", false);
 }
 
 Oid RepgroupsOid(void)
 {
-	return get_relname_relid("repgroups", HpNamespaceOid());
+	return get_relname_relid("repgroups", ShardmanNamespaceOid());
 }
 
 static Oid RepgroupsIndexOid(void)
 {
-	return get_relname_relid("repgroups_pkey", HpNamespaceOid());
+	return get_relname_relid("repgroups_pkey", ShardmanNamespaceOid());
 }
 
 static Oid ShardedTablesOid(void)
 {
-	return get_relname_relid("sharded_tables", HpNamespaceOid());
+	return get_relname_relid("sharded_tables", ShardmanNamespaceOid());
 }
 
 static Oid ShardedTablesIndexOid(void)
 {
-	return get_relname_relid("sharded_tables_pkey", HpNamespaceOid());
+	return get_relname_relid("sharded_tables_pkey", ShardmanNamespaceOid());
 }
 
 static Oid PartsOid(void)
 {
-	return get_relname_relid("parts", HpNamespaceOid());
+	return get_relname_relid("parts", ShardmanNamespaceOid());
 }
 
 static Oid PartsIndexOid(void)
 {
-	return get_relname_relid("parts_pkey", HpNamespaceOid());
+	return get_relname_relid("parts_pkey", ShardmanNamespaceOid());
 }
 
 /* Get foreign server oid by rgid. Errors out if there is no such rgid. */

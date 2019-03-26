@@ -2,5 +2,5 @@ comment = 'A bunch of stuff forming sharding'
 # CREATE EXTENSION will run extname--version.sql file
 default_version = '0.0.1'
 relocatable = false
-schema = hodgepodge
-module_pathname = '$libdir/hodgepodge'
+schema = shardman
+module_pathname = '$libdir/shardman'

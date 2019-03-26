@@ -1,14 +1,14 @@
 /* -------------------------------------------------------------------------
  *
- * hodgepodge.h
+ * shardman.h
  *
  * Copyright (c) 2018, Postgres Professional
  *
  * -------------------------------------------------------------------------
  */
 
-#ifndef __HODGEPODGE_H__
-#define __HODGEPODGE_H__
+#ifndef __SHARDMAN_H__
+#define __SHARDMAN_H__
 
 /* #ifndef DEBUG_LEVEL */
 /* #define DEBUG_LEVEL 0 */
@@ -36,4 +36,4 @@ extern int MyRgid;
 
 extern void _PG_init(void);
 
-#endif /* HODGEPODGE_H */
+#endif /* SHARDMAN_H */

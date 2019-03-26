@@ -12,9 +12,9 @@ import (
 
 	"github.com/jackc/pgx"
 
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/hplog"
-	"postgrespro.ru/hodgepodge/internal/pg"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/hplog"
+	"postgrespro.ru/shardman/internal/pg"
 )
 
 func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore, hpc *cluster.StoreConnInfo, newrg *cluster.RepGroup) error {
@@ -42,11 +42,11 @@ func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore
 	defer conn.Close()
 
 	// actually makes sense only for the first rg: dump/restore will recreate it anyway
-	_, err = conn.Exec("drop extension if exists hodgepodge cascade")
+	_, err = conn.Exec("drop extension if exists shardman cascade")
 	if err != nil {
 		return fmt.Errorf("Unable to drop ext: %v", err)
 	}
-	_, err = conn.Exec("create extension hodgepodge cascade")
+	_, err = conn.Exec("create extension shardman cascade")
 	if err != nil {
 		return fmt.Errorf("Unable to create extension: %v", err)
 	}
@@ -125,17 +125,17 @@ func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore
 			return fmt.Errorf("pg_dumpall failed: %v, stderr: %v", exiterr, string(exiterr.Stderr[:]))
 		}
 		// pg_dump won't copy data from extension tables, do that instead of him...
-		rgs_dump_cmd := exec.Command("psql", "--dbname", existing_connstr, "-c", "copy hodgepodge.repgroups to stdout")
+		rgs_dump_cmd := exec.Command("psql", "--dbname", existing_connstr, "-c", "copy shardman.repgroups to stdout")
 		rgs_dump, err := rgs_dump_cmd.Output()
 		if err != nil {
 			return fmt.Errorf("pg_dump failed: %v", err)
 		}
-		tables_dump_cmd := exec.Command("psql", "--dbname", existing_connstr, "-c", "copy hodgepodge.sharded_tables to stdout")
+		tables_dump_cmd := exec.Command("psql", "--dbname", existing_connstr, "-c", "copy shardman.sharded_tables to stdout")
 		tables_dump, err := tables_dump_cmd.Output()
 		if err != nil {
 			return fmt.Errorf("pg_dump failed: %v", err)
 		}
-		parts_dump_cmd := exec.Command("psql", "--dbname", existing_connstr, "-c", "copy hodgepodge.parts to stdout")
+		parts_dump_cmd := exec.Command("psql", "--dbname", existing_connstr, "-c", "copy shardman.parts to stdout")
 		parts_dump, err := parts_dump_cmd.Output()
 		if err != nil {
 			return fmt.Errorf("pg_dump failed: %v", err)
@@ -147,19 +147,19 @@ func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore
 		if err != nil {
 			return fmt.Errorf("psql dump restore failed: %v; stderr/out is %v", err, string(out[:]))
 		}
-		rgs_restore_cmd := exec.Command("psql", "--dbname", newconnstr, "-c", "copy hodgepodge.repgroups from stdin")
+		rgs_restore_cmd := exec.Command("psql", "--dbname", newconnstr, "-c", "copy shardman.repgroups from stdin")
 		rgs_restore_cmd.Stdin = bytes.NewReader(rgs_dump)
 		out, err = rgs_restore_cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("psql dump restore failed: %v; stderr/out is %v", err, string(out[:]))
 		}
-		tables_restore_cmd := exec.Command("psql", "--dbname", newconnstr, "-c", "copy hodgepodge.sharded_tables from stdin")
+		tables_restore_cmd := exec.Command("psql", "--dbname", newconnstr, "-c", "copy shardman.sharded_tables from stdin")
 		tables_restore_cmd.Stdin = bytes.NewReader(tables_dump)
 		out, err = tables_restore_cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("psql dump restore failed: %v; stderr/out is %v", err, string(out[:]))
 		}
-		parts_restore_cmd := exec.Command("psql", "--dbname", newconnstr, "-c", "copy hodgepodge.parts from stdin")
+		parts_restore_cmd := exec.Command("psql", "--dbname", newconnstr, "-c", "copy shardman.parts from stdin")
 		parts_restore_cmd.Stdin = bytes.NewReader(parts_dump)
 		out, err = parts_restore_cmd.CombinedOutput()
 		if err != nil {
@@ -178,7 +178,7 @@ func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore
 
 	bcst.Begin()
 	// forbid all DDL during rg addition
-	bcst.PushAll("lock hodgepodge.repgroups in access exclusive mode")
+	bcst.PushAll("lock shardman.repgroups in access exclusive mode")
 	// create foreign servers to all rgs at newrg and vice versa
 	newrgconnstrmap, err := cs.GetSuConnstrMap(context.TODO(), newrg, cldata)
 	if err != nil {
@@ -187,9 +187,9 @@ func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore
 	newrgumopts, _ := pg.FormUserMappingOpts(newrgconnstrmap)
 	newrgfsopts, _ := pg.FormForeignServerOpts(newrgconnstrmap)
 	// insert myself
-	bcst.Push(newrgid, fmt.Sprintf("insert into hodgepodge.repgroups values (%d, null)", newrgid))
+	bcst.Push(newrgid, fmt.Sprintf("insert into shardman.repgroups values (%d, null)", newrgid))
 	// restamp oids
-	bcst.Push(newrgid, "select hodgepodge.restamp_oids()")
+	bcst.Push(newrgid, "select shardman.restamp_oids()")
 	for rgid, rg := range rgs {
 		if rgid == newrgid {
 			continue
@@ -201,12 +201,12 @@ func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore
 		rgumopts, _ := pg.FormUserMappingOpts(rgconnstrmap)
 		rgfsopts, _ := pg.FormForeignServerOpts(rgconnstrmap)
 		bcst.Push(newrgid, fmt.Sprintf("drop server if exists %s cascade", pg.FSI(rgid)))
-		bcst.Push(newrgid, fmt.Sprintf("create server %s foreign data wrapper hodgepodge_postgres_fdw %s", pg.FSI(rgid), rgfsopts))
-		bcst.Push(newrgid, fmt.Sprintf("update hodgepodge.repgroups set srvid = (select oid from pg_foreign_server where srvname = %s) where id = %d",
+		bcst.Push(newrgid, fmt.Sprintf("create server %s foreign data wrapper shardman_postgres_fdw %s", pg.FSI(rgid), rgfsopts))
+		bcst.Push(newrgid, fmt.Sprintf("update shardman.repgroups set srvid = (select oid from pg_foreign_server where srvname = %s) where id = %d",
 			pg.FSL(rgid), rgid))
 		bcst.Push(rgid, fmt.Sprintf("drop server if exists %s cascade", pg.FSI(newrgid)))
-		bcst.Push(rgid, fmt.Sprintf("create server %s foreign data wrapper hodgepodge_postgres_fdw %s", pg.FSI(newrgid), newrgfsopts))
-		bcst.Push(rgid, fmt.Sprintf("insert into hodgepodge.repgroups values (%d, (select oid from pg_foreign_server where srvname = %s))",
+		bcst.Push(rgid, fmt.Sprintf("create server %s foreign data wrapper shardman_postgres_fdw %s", pg.FSI(newrgid), newrgfsopts))
+		bcst.Push(rgid, fmt.Sprintf("insert into shardman.repgroups values (%d, (select oid from pg_foreign_server where srvname = %s))",
 			newrgid, pg.FSL(newrgid)))
 		// create sudo user mappings
 		bcst.Push(newrgid, fmt.Sprintf("drop user mapping if exists for current_user server %s", pg.FSI(rgid)))
@@ -214,7 +214,7 @@ func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore
 		bcst.Push(rgid, fmt.Sprintf("drop user mapping if exists for current_user server %s", pg.FSI(newrgid)))
 		bcst.Push(rgid, fmt.Sprintf("create user mapping for current_user server %s %s", pg.FSI(newrgid), newrgumopts))
 	}
-	bcst.Push(newrgid, "select hodgepodge.restore_foreign_tables()")
+	bcst.Push(newrgid, "select shardman.restore_foreign_tables()")
 	_, err = bcst.Commit(true)
 	if err != nil {
 		return fmt.Errorf("bcst failed: %v", err)

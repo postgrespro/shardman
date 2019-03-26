@@ -1,0 +1,38 @@
+---
+# install shardman
+
+- name: clone shardman sources {{ shardman_repo }}/{{ shardman_version_tag }}
+  git: repo="{{ shardman_repo }}"
+    dest="{{ shardman_src }}"
+    version="{{ shardman_version_tag }}"
+    depth=1
+    accept_hostkey=True
+    force=yes
+  when: shardman_use_repo | bool
+
+- name: copy shardman from {{ shardman_local_dir }}
+  synchronize:
+    src="{{ shardman_local_dir }}"
+    dest="{{ shardman_src }}"
+  when: not (shardman_use_repo | bool)
+  tags:
+    - copy_shardman
+
+- name: build shardman go
+  command: make
+  args:
+    chdir: "{{ shardman_src }}/go"
+
+- name: add shardman binaries to PATH in .bashrc
+  lineinfile:
+    path: "{{ ansible_env.HOME}}/.bashrc"
+    line: 'export PATH=$PATH:{{ shardman_src }}/go/bin'
+    # important, otherwise not read in non-interactive sessions
+    insertbefore: BOF
+
+- name: build and install shardman ext
+  shell: make clean && make && make -j {{ makejobs }} install
+  args:
+    chdir: "{{ shardman_src }}/ext"
+  tags:
+    - shardman_ext

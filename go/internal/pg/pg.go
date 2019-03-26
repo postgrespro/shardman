@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx"
 
-	"postgrespro.ru/hodgepodge/internal/cluster"
+	"postgrespro.ru/shardman/internal/cluster"
 )
 
 // Broadcaster
@@ -218,7 +218,7 @@ func (bcst *Broadcaster) Commit(twophase bool) (map[int]string, error) {
 	var results = map[int]string{}
 	if twophase {
 		for _, bconn := range bcst.conns {
-			bconn.in <- Prepare{gid: "hodgepodge"}
+			bconn.in <- Prepare{gid: "shardman"}
 		}
 	} else {
 		for _, bconn := range bcst.conns {
@@ -247,9 +247,9 @@ func (bcst *Broadcaster) Commit(twophase bool) (map[int]string, error) {
 	if twophase {
 		for _, bconn := range bcst.conns {
 			if err == nil {
-				bconn.in <- CommitPrepared{gid: "hodgepodge"}
+				bconn.in <- CommitPrepared{gid: "shardman"}
 			} else {
-				bconn.in <- RollbackPrepared{gid: "hodgepodge"}
+				bconn.in <- RollbackPrepared{gid: "shardman"}
 			}
 		}
 		for nreports = 0; nreports < len(bcst.conns); nreports++ {
@@ -437,7 +437,7 @@ func GetTables(cs *cluster.ClusterStore, ctx context.Context) ([]cluster.Table, 
 	defer conn.Close()
 
 	rows, err := conn.Query(
-		`select n.nspname, c.relname, nparts, cn.nspname colocated_nspname, cc.relname colocated_relname from hodgepodge.sharded_tables s join pg_class c on (s.rel = c.oid) join
+		`select n.nspname, c.relname, nparts, cn.nspname colocated_nspname, cc.relname colocated_relname from shardman.sharded_tables s join pg_class c on (s.rel = c.oid) join
 pg_namespace n on (c.relnamespace = n.oid) left outer join
 pg_class cc on (cc.oid = s.colocated_with) left outer join
 pg_namespace cn on (cn.oid = cc.relnamespace);`)
@@ -466,7 +466,7 @@ pg_namespace cn on (cn.oid = cc.relnamespace);`)
 
 	// fill partmaps
 	for i, t := range tables {
-		rows, err := conn.Query(fmt.Sprintf("select pnum, rgid from hodgepodge.parts where rel = %s::regclass",
+		rows, err := conn.Query(fmt.Sprintf("select pnum, rgid from shardman.parts where rel = %s::regclass",
 			QL(fmt.Sprintf("%s.%s", QI(t.Schema), QI(t.Relname)))))
 		if err != nil {
 			return nil, err

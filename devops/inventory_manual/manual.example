@@ -1,16 +1,15 @@
-# For local development
+# Inventory example
 
-# [manual]
-# [manual:children]
-# manual_shardlord
-# manual_workers
+[nodes:vars]
+ansible_user=ubuntu
 
-# [manual_shardlord]
-# 10.42.42.10
+[nodes]
+10.42.42.10
+10.42.42.20
+10.42.42.30
+10.42.42.40
 
-# [manual_workers]
-# 10.42.42.20
-# 10.42.42.30
-
-# [manual_init_node]
-# 10.42.42.20
+[etcd_nodes]
+10.42.42.10
+10.42.42.20
+10.42.42.30

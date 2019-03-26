@@ -8,9 +8,9 @@ import (
 
 	"github.com/jackc/pgx"
 
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/hplog"
-	"postgrespro.ru/hodgepodge/internal/pg"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/hplog"
+	"postgrespro.ru/shardman/internal/pg"
 )
 
 func RmRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore, rmRepGroupName string) error {
@@ -55,6 +55,8 @@ func RmRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore,
 
 	delete(rgs, rmrgid) // rmrg might be unaccessible, don't touch it
 	// if there is someone left, purge removed rg from them
+	// XXX this means it's currently impossible to remove two repgroups that
+	// permanently failed. Since they can hold data, this is not very important...
 	for _, rg := range rgs {
 		connstr, err := pg.GetSuConnstr(ctx, cs, rg, cldata)
 		if err != nil {
@@ -67,11 +69,11 @@ func RmRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore,
 		}
 		defer conn.Close()
 
-		_, err = conn.Exec(fmt.Sprintf("select hodgepodge.rmrepgroup(%d)", rmrgid))
+		_, err = conn.Exec(fmt.Sprintf("select shardman.rmrepgroup(%d)", rmrgid))
 		if err != nil {
 			return fmt.Errorf("failed to remove rg from others: %v", err)
 		}
-		break // broadcasted by hodgepodge.rmrepgroup
+		break // broadcasted by shardman.rmrepgroup
 	}
 
 	err = cs.PutRepGroups(ctx, rgs)

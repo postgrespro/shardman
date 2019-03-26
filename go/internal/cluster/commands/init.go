@@ -8,7 +8,7 @@ import (
 	"log"
 	"os/user"
 
-	"postgrespro.ru/hodgepodge/internal/cluster"
+	"postgrespro.ru/shardman/internal/cluster"
 )
 
 // scribbles directly on input
@@ -53,7 +53,7 @@ func adjustSpecDefaults(spec *cluster.ClusterSpec) {
 		"log_min_messages":          "INFO",
 		"max_prepared_transactions": "100",
 		"wal_level":                 "logical", // rebalance
-		"shared_preload_libraries":  "hodgepodge",
+		"shared_preload_libraries":  "shardman",
 	}
 	// impose given config over our defaults
 	pgConfGiven := spec.StolonSpec.PGParameters

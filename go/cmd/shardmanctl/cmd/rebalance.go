@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/cluster/commands"
-	"postgrespro.ru/hodgepodge/internal/pg"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/cluster/commands"
+	"postgrespro.ru/shardman/internal/pg"
 )
 
 var parallelism int

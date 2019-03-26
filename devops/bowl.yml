@@ -5,6 +5,6 @@
 
   - name: make bowls {{ action }}
     systemd:
-      name: hodgepodge-bowl-{{ cluster_name }}.service
+      name: shardman-bowl-{{ cluster_name }}.service
       scope: user
       state: "{{ action }}"

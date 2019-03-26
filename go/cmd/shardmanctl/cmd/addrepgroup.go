@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/cluster/commands"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/cluster/commands"
 )
 
 // we will store args directly in RepGroup struct
@@ -24,10 +24,10 @@ func init() {
 	rootCmd.AddCommand(addrgCmd)
 
 	addrgCmd.Flags().StringVar(&newrg.StolonName, "stolon-name", "",
-		"cluster-name of Stolon instance being added. Must be unique for the whole hodgepodge cluster")
+		"cluster-name of Stolon instance being added. Must be unique for the whole shardman cluster")
 	addrgCmd.Flags().StringVar(&newrg.StoreConnInfo.Endpoints, "store-endpoints",
 		"",
-		"a comma-delimited list of Stolon store endpoints (use https scheme for tls communication). If empty, assume Stolon data is stored in the same store as hodgepodge, under stolon/cluster prefix; the rest of store-connection options are irrelevant in this case.")
+		"a comma-delimited list of Stolon store endpoints (use https scheme for tls communication). If empty, assume Stolon data is stored in the same store as shardman, under stolon/cluster prefix; the rest of store-connection options are irrelevant in this case.")
 	addrgCmd.Flags().StringVar(&newrg.StoreConnInfo.CAFile, "store-ca-file", "",
 		"verify certificates of HTTPS-enabled Stolon store servers using this CA bundle")
 	addrgCmd.Flags().StringVar(&newrg.StoreConnInfo.CertFile, "store-cert-file", "",

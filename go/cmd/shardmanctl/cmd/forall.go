@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/pg"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/pg"
 )
 
 // for args
@@ -31,7 +31,7 @@ func init() {
 	rootCmd.AddCommand(faCmd)
 
 	faCmd.Flags().StringVar(&sql, "sql", "", "SQL to execute.")
-	faCmd.Flags().BoolVar(&twophase, "twophase", false, "Use 2PC; gid is 'hodgepodge' everywhere")
+	faCmd.Flags().BoolVar(&twophase, "twophase", false, "Use 2PC; gid is 'shardman' everywhere")
 }
 
 func forall(cmd *cobra.Command, args []string) {

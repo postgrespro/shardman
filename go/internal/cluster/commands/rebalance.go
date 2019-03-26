@@ -13,9 +13,9 @@ import (
 	"github.com/jackc/pgx"
 	"go.uber.org/zap"
 
-	"postgrespro.ru/hodgepodge/internal/cluster"
-	"postgrespro.ru/hodgepodge/internal/hplog"
-	"postgrespro.ru/hodgepodge/internal/pg"
+	"postgrespro.ru/shardman/internal/cluster"
+	"postgrespro.ru/shardman/internal/hplog"
+	"postgrespro.ru/shardman/internal/pg"
 )
 
 type MoveTask struct {
@@ -71,7 +71,7 @@ func rwcleanup(rwLog *zap.SugaredLogger, src_conn **pgx.Conn, dst_conn **pgx.Con
 		goto CLOSE_CONNS // nothing to do except for closing conns
 	}
 
-	_, err = (*src_conn).Exec(fmt.Sprintf("select hodgepodge.write_protection_off(%s::regclass)",
+	_, err = (*src_conn).Exec(fmt.Sprintf("select shardman.write_protection_off(%s::regclass)",
 		pg.QL(fmt.Sprintf("%s_%d", task.TableName, task.Pnum))))
 	if err != nil {
 		rwLog.Errorf("cleanup: write_protection_off failed: %v", err)
@@ -175,12 +175,12 @@ func movePartWorkerMain(hl *hplog.Logger, in <-chan MoveTask, out chan<- report,
 			}
 			state = movePartWorkerConnsEstablished
 			/* must not broadcast anything */
-			_, err = dst_conn.Exec("set session hodgepodge.broadcast_utility to off")
+			_, err = dst_conn.Exec("set session shardman.broadcast_utility to off")
 			if err != nil {
 				rwLog.Errorf("failed to turn off broadcast_utility: %v", err)
 				goto ERR
 			}
-			_, err = src_conn.Exec("set session hodgepodge.broadcast_utility to off")
+			_, err = src_conn.Exec("set session shardman.broadcast_utility to off")
 			if err != nil {
 				rwLog.Errorf("failed to turn off broadcast_utility: %v", err)
 				goto ERR
@@ -220,7 +220,7 @@ func movePartWorkerMain(hl *hplog.Logger, in <-chan MoveTask, out chan<- report,
 
 			if state == movePartWorkerWaitInitCopy {
 				var synced bool
-				err = dst_conn.QueryRow(fmt.Sprintf("select hodgepodge.is_subscription_ready('hp_copy_%d')",
+				err = dst_conn.QueryRow(fmt.Sprintf("select shardman.is_subscription_ready('hp_copy_%d')",
 					myid)).Scan(&synced)
 				if err != nil {
 					rwLog.Errorf("%v", err)
@@ -243,7 +243,7 @@ func movePartWorkerMain(hl *hplog.Logger, in <-chan MoveTask, out chan<- report,
 					continue /* lag is still too big */
 				}
 				// ok, block writes and wait for full sync
-				_, err = src_conn.Exec(fmt.Sprintf("select hodgepodge.write_protection_on(%s::regclass)",
+				_, err = src_conn.Exec(fmt.Sprintf("select shardman.write_protection_on(%s::regclass)",
 					pg.QL(fmt.Sprintf("%s_%d", task.TableName, task.Pnum))))
 				if err != nil {
 					rwLog.Errorf("failed to block writes: %v", err)
@@ -284,7 +284,7 @@ func movePartWorkerMain(hl *hplog.Logger, in <-chan MoveTask, out chan<- report,
 				// otherwise we might crash and lost partition.
 				// src partition is also dropped here
 				state = movePartWorkerCommitting
-				_, err = dst_conn.Exec(fmt.Sprintf("select hodgepodge.part_moved(%s::regclass, %d, %d, %d);",
+				_, err = dst_conn.Exec(fmt.Sprintf("select shardman.part_moved(%s::regclass, %d, %d, %d);",
 					pg.QL(pg.QI(task.TableName)), task.Pnum, task.SrcRgid, task.DstRgid))
 				if err != nil {
 					rwLog.Errorf("failed to commit partmove: %v", err)
@@ -373,7 +373,7 @@ func Rebalance(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore, 
 		}
 	}
 	if err != nil {
-		hl.Infof("rebalance failed; please run 'select hodgepodge.rebalance_cleanup();' to ensure there is no orphane subs/pubs/slots/partitions")
+		hl.Infof("rebalance failed; please run 'select shardman.rebalance_cleanup();' to ensure there is no orphane subs/pubs/slots/partitions")
 	}
 	return err
 }

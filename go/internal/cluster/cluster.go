@@ -27,7 +27,7 @@ type ClusterSpec struct {
 // Replication group ~ Stolon instance.
 type RepGroup struct {
 	StolonName string
-	// if StoreEndpoints is "", hodgepodge store is assumed
+	// if StoreEndpoints is "", shardman store is assumed
 	StoreConnInfo StoreConnInfo
 	StorePrefix   string
 	SysId         int64

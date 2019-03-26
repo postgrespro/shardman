@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------------------
  *
- * hodgepodge.sql
+ * shardman.sql
  *
  * Copyright (c) 2018, Postgres Professional
  *
@@ -8,7 +8,7 @@
  */
 
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
-\echo Use "CREATE EXTENSION hodgepodge" to load this file. \quit
+\echo Use "CREATE EXTENSION shardman" to load this file. \quit
 
 -- List of replication groups present in the cluster, *including* us.
 -- myself's srvid is null
@@ -44,13 +44,13 @@ begin
   end if;
   return new;
 end $$ language plpgsql;
-create trigger sharded_tables_fill_relname before insert on hodgepodge.sharded_tables
+create trigger sharded_tables_fill_relname before insert on shardman.sharded_tables
   for each row execute function sharded_tables_fill_relname();
 
 -- executed on new rg after dump/restore
-create function hodgepodge.restamp_oids() returns void as $$
+create function shardman.restamp_oids() returns void as $$
 begin
-  update hodgepodge.sharded_tables s set rel = format('%I.%I', s.nspname, s.relname)::regclass;
+  update shardman.sharded_tables s set rel = format('%I.%I', s.nspname, s.relname)::regclass;
 end $$ language plpgsql;
 
 -- executed on new rg
@@ -63,12 +63,12 @@ declare
   part_name name;
   fdw_part_name name;
   nparts int;
-  me int := id from hodgepodge.repgroups where srvid is null;
+  me int := id from shardman.repgroups where srvid is null;
 begin
-  set local hodgepodge.broadcast_utility to off;
-  for relid, nparts in select st.rel, st.nparts from hodgepodge.sharded_tables st loop
+  set local shardman.broadcast_utility to off;
+  for relid, nparts in select st.rel, st.nparts from shardman.sharded_tables st loop
     relname := c.relname from pg_class c where oid = relid;
-    for pnum, holder_rgid in select parts.pnum, rgid from hodgepodge.parts parts where parts.rel = relid loop
+    for pnum, holder_rgid in select parts.pnum, rgid from shardman.parts parts where parts.rel = relid loop
       assert holder_rgid != me, 'new rg holds partitions';
       part_name := format('%s_%s', relname, pnum);
       fdw_part_name := format('%s_fdw', part_name);
@@ -98,42 +98,42 @@ declare
   part_name name;
   fdw_part_name name;
 begin
-  if exists (select 1 from hodgepodge.sharded_tables t where t.rel = relid) then
+  if exists (select 1 from shardman.sharded_tables t where t.rel = relid) then
     raise exception 'table % is already sharded', relid;
   end if;
-  if colocate_with is not null and not exists(select 1 from hodgepodge.sharded_tables t where t.rel = colocate_with) then
+  if colocate_with is not null and not exists(select 1 from shardman.sharded_tables t where t.rel = colocate_with) then
     raise exception 'colocated table % is not sharded', relid;
   end if;
 
   -- record table as sharded everywhere
   -- note that printing regclass automatically quotes it
-  perform hodgepodge.bcst_all_sql(format('insert into hodgepodge.sharded_tables values (%L::regclass, %s, %L::regclass)',
+  perform shardman.bcst_all_sql(format('insert into shardman.sharded_tables values (%L::regclass, %s, %L::regclass)',
                                          relid, nparts, colocate_with));
 
   -- Get repgroups in random order
-  select array(select id from hodgepodge.repgroups order by random()) into rgids;
+  select array(select id from shardman.repgroups order by random()) into rgids;
   nrgids := array_length(rgids, 1);
 
   for i in 0..nparts-1 loop
     if colocate_with is null then
       holder_rgid := rgids[1 + (i % nrgids)]; -- round robin
     else
-      holder_rgid := p.rgid from hodgepodge.parts p where p.rel = colocate_with and p.pnum = i;
+      holder_rgid := p.rgid from shardman.parts p where p.rel = colocate_with and p.pnum = i;
     end if;
 
     -- on each rg, create real or foreign partition
     part_name := format('%s_%s', relname, i);
     fdw_part_name := format('%s_fdw', part_name);
     raise log 'putting part % on %', part_name, holder_rgid;
-    for rgid in select id from hodgepodge.repgroups loop
+    for rgid in select id from shardman.repgroups loop
       if rgid = holder_rgid then
-        perform hodgepodge.ex_sql(rgid, format('create table %I partition of %I for values with (modulus %s, remainder %s)',
+        perform shardman.ex_sql(rgid, format('create table %I partition of %I for values with (modulus %s, remainder %s)',
 	                                   part_name, relname, nparts, i));
       else
-        perform hodgepodge.ex_sql(rgid, format('create foreign table %I partition of %I for values with (modulus %s, remainder %s) server hp_rg_%s options (table_name %L)',
+        perform shardman.ex_sql(rgid, format('create foreign table %I partition of %I for values with (modulus %s, remainder %s) server hp_rg_%s options (table_name %L)',
 	                                   fdw_part_name, relname, nparts, i, holder_rgid, quote_ident(part_name)));
       end if;
-      perform hodgepodge.ex_sql(rgid, format('insert into hodgepodge.parts values (%L::regclass, %s, %s)',
+      perform shardman.ex_sql(rgid, format('insert into shardman.parts values (%L::regclass, %s, %s)',
                                              quote_ident(relname), i, holder_rgid));
     end loop;
   end loop;
@@ -146,25 +146,25 @@ declare
   relname name not null := relname from pg_class where oid = relid;
   part_name name := format('%s_%s', relname, pnum);
   fdw_part_name name := format('%s_fdw', part_name);
-  nparts int not null := nparts from hodgepodge.sharded_tables where rel = relid;
+  nparts int not null := nparts from shardman.sharded_tables where rel = relid;
   rgid int;
 begin
-  for rgid in select id from hodgepodge.repgroups loop
+  for rgid in select id from shardman.repgroups loop
     if rgid = dst_rgid then
       /* drop foreign, attach real */
-      perform hodgepodge.ex_sql(rgid, format('drop foreign table %I', fdw_part_name));
-      perform hodgepodge.ex_sql(rgid, format('alter table %I attach partition %I for values with (modulus %s, remainder %s)',
+      perform shardman.ex_sql(rgid, format('drop foreign table %I', fdw_part_name));
+      perform shardman.ex_sql(rgid, format('alter table %I attach partition %I for values with (modulus %s, remainder %s)',
                                              relname, part_name, nparts, pnum));
     elsif rgid = src_rgid then
       /* drop real, attach foreign */
-      perform hodgepodge.ex_sql(rgid, format('drop table %I', part_name));
-      perform hodgepodge.ex_sql(rgid, format('create foreign table %I partition of %I for values with (modulus %s, remainder %s) server hp_rg_%s options (table_name %L)', fdw_part_name, relname, nparts, pnum, dst_rgid, quote_ident(part_name)));
+      perform shardman.ex_sql(rgid, format('drop table %I', part_name));
+      perform shardman.ex_sql(rgid, format('create foreign table %I partition of %I for values with (modulus %s, remainder %s) server hp_rg_%s options (table_name %L)', fdw_part_name, relname, nparts, pnum, dst_rgid, quote_ident(part_name)));
     else
       /* recreate foreign */
-      perform hodgepodge.ex_sql(rgid, format('drop foreign table %I', fdw_part_name));
-      perform hodgepodge.ex_sql(rgid, format('create foreign table %I partition of %I for values with (modulus %s, remainder %s) server hp_rg_%s options (table_name %L)', fdw_part_name, relname, nparts, pnum, dst_rgid, quote_ident(part_name)));
+      perform shardman.ex_sql(rgid, format('drop foreign table %I', fdw_part_name));
+      perform shardman.ex_sql(rgid, format('create foreign table %I partition of %I for values with (modulus %s, remainder %s) server hp_rg_%s options (table_name %L)', fdw_part_name, relname, nparts, pnum, dst_rgid, quote_ident(part_name)));
     end if;
-    perform hodgepodge.ex_sql(rgid, format('update hodgepodge.parts set rgid = %s where rel = %L::regclass and pnum = %s',
+    perform shardman.ex_sql(rgid, format('update shardman.parts set rgid = %s where rel = %L::regclass and pnum = %s',
                               dst_rgid, quote_ident(relname), pnum));
 
   end loop;
@@ -174,12 +174,12 @@ create function rmrepgroup(rmrgid int) returns void as $$
 declare
   rgid int;
 begin
-  for rgid in select id from hodgepodge.repgroups loop
+  for rgid in select id from shardman.repgroups loop
     if rgid = rmrgid then -- don't touch removed rg
       continue;
     end if;
-    perform hodgepodge.ex_sql(rgid, format('delete from hodgepodge.repgroups where id = %s', rmrgid));
-    perform hodgepodge.ex_sql(rgid, format('drop server if exists hp_rg_%s cascade', rmrgid));
+    perform shardman.ex_sql(rgid, format('delete from shardman.repgroups where id = %s', rmrgid));
+    perform shardman.ex_sql(rgid, format('drop server if exists hp_rg_%s cascade', rmrgid));
   end loop;
 end $$ language plpgsql;
 
@@ -199,7 +199,7 @@ create function write_protection_on(part regclass) returns void as $$
 begin
 	if not exists (select 1 from pg_trigger where tgname = 'write_protection' and tgrelid = part) then
 		execute format('create trigger write_protection before insert or update or delete or truncate on
-					   %I for each statement execute procedure hodgepodge.deny_access();',
+					   %I for each statement execute procedure shardman.deny_access();',
 					   part::name);
 	end if;
 end
@@ -234,11 +234,11 @@ create view lock_graph(wait, hold) as
         -- local dependencies
         -- if xact is already prepared, we take node and pid of the coordinator.
         select
-                row((pg_control_system()).system_identifier, wait.pid)::hodgepodge.process,
+                row((pg_control_system()).system_identifier, wait.pid)::shardman.process,
                 case when hold.pid is not null then
-                    row((pg_control_system()).system_identifier, hold.pid)::hodgepodge.process
+                    row((pg_control_system()).system_identifier, hold.pid)::shardman.process
                 else -- prepared
-                    row(split_part(gid, ':', 3)::bigint, split_part(gid, ':', 4)::int)::hodgepodge.process
+                    row(split_part(gid, ':', 3)::bigint, split_part(gid, ':', 4)::int)::shardman.process
                 end
         from pg_locks wait, pg_locks hold left outer join pg_prepared_xacts twopc
                 on twopc.transaction=hold.transactionid
@@ -259,14 +259,14 @@ create view lock_graph(wait, hold) as
         union all -- only for performance; there is no uniques
         -- if this fdw backend is busy, potentially waiting, add edge coordinator -> fdw
         select row(split_part(application_name, ':', 2)::bigint,
-                   split_part(application_name,':', 3)::int)::hodgepodge.process,
-               row((pg_control_system()).system_identifier, pid)::hodgepodge.process
+                   split_part(application_name,':', 3)::int)::shardman.process,
+               row((pg_control_system()).system_identifier, pid)::shardman.process
         from pg_stat_activity where application_name like 'pgfdw:%' and wait_event<>'ClientRead'
         union all -- only for performance; there is no uniques
         -- otherwise, coordinator itself is busy, potentially waiting, so add fdw ->
         -- coordinator edge
-        select row((pg_control_system()).system_identifier, pid)::hodgepodge.process,
-               row(split_part(application_name,':',2)::bigint, split_part(application_name,':',3)::int)::hodgepodge.process
+        select row((pg_control_system()).system_identifier, pid)::shardman.process,
+               row(split_part(application_name,':',2)::bigint, split_part(application_name,':',3)::int)::shardman.process
         from pg_stat_activity where application_name like 'pgfdw:%' and wait_event='ClientRead';
 
 
@@ -277,7 +277,7 @@ create view lock_graph_native_types(wait_sysid, wait_pid, hold_sysid, hold_pid) 
 -- rebalance stuff
 create function rebalance_cleanup() returns void as $$
 begin
-  perform hodgepodge.bcst_all_sql('select hodgepodge.rebalance_cleanup_local()');
+  perform shardman.bcst_all_sql('select shardman.rebalance_cleanup_local()');
 end $$ language plpgsql;
 
 -- drop subs, slots, pubs used for rebalance and potential orphaned partitions
@@ -291,23 +291,23 @@ declare
   pnum int;
   holder_rgid int;
   part_name name;
-  me int := id from hodgepodge.repgroups where srvid is null;
+  me int := id from shardman.repgroups where srvid is null;
 begin
-  set local hodgepodge.broadcast_utility to off;
+  set local shardman.broadcast_utility to off;
 
   for sub in select subname from pg_subscription where subname like 'hp_copy_%' loop
-		perform hodgepodge.eliminate_sub(sub.subname);
+		perform shardman.eliminate_sub(sub.subname);
   end loop;
   for rs in select slot_name from pg_replication_slots where slot_name like 'hp_copy_%' and slot_type = 'logical' loop
-    perform hodgepodge.drop_repslot(rs.slot_name, true);
+    perform shardman.drop_repslot(rs.slot_name, true);
   end loop;
   for pub in select pubname from pg_publication where pubname like 'hp_copy_%' loop
     execute format('drop publication %I', pub.pubname);
   end loop;
 
-  for relid in select st.rel, st.nparts from hodgepodge.sharded_tables st loop
+  for relid in select st.rel, st.nparts from shardman.sharded_tables st loop
     relname := c.relname from pg_class c where oid = relid;
-    for pnum, holder_rgid in select parts.pnum, rgid from hodgepodge.parts parts where parts.rel = relid loop
+    for pnum, holder_rgid in select parts.pnum, rgid from shardman.parts parts where parts.rel = relid loop
       part_name := format('%s_%s', relname, pnum);
       if holder_rgid != me then
         execute format('drop table if exists %I', part_name);
@@ -353,7 +353,7 @@ begin
       raise debug '[HP] Killing repslot % with fire', slot_name;
       for i in 1..kill_ws_times loop
         raise debug '[HP] Killing walsender for slot %', slot_name;
-	perform hodgepodge.terminate_repslot_walsender(slot_name);
+	perform shardman.terminate_repslot_walsender(slot_name);
 	if i != kill_ws_times then
 	  perform pg_sleep(0.05);
 	end if;
@@ -380,6 +380,6 @@ RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
-CREATE FOREIGN DATA WRAPPER hodgepodge_postgres_fdw
+CREATE FOREIGN DATA WRAPPER shardman_postgres_fdw
   HANDLER postgres_fdw_handler
   VALIDATOR postgres_fdw_validator;

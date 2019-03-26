@@ -5,7 +5,7 @@
 Description=stolon proxy
 Documentation=https://github.com/sorintlab/stolon/blob/master/doc/commands/stolon-proxy.md
 # we want to stop proxy when bowl is stopped
-PartOf=hodgepodge-bowl-{{ cluster_name }}.service
+PartOf=shardman-bowl-{{ cluster_name }}.service
 
 [Service]
 Type=simple
@@ -16,4 +16,4 @@ RestartSec=10s
 
 # start it when bowl is started (if this unit is enabled)
 [Install]
-WantedBy=hodgepodge-bowl-{{ cluster_name }}.service
+WantedBy=shardman-bowl-{{ cluster_name }}.service

@@ -5,15 +5,15 @@
 # data_dir is also hardcoded here during deployment since we need to arrange
 # a place where to look for env files.
 [Unit]
-Description=deployment daemon for hodgepodge
-Documentation=https://github.com/arssher/hodgepodge
+Description=deployment daemon for shardman
+Documentation=https://github.com/postgrespro/shardmana
 # we need user dbus bus to work with units
 Requires=dbus.service
 
 [Service]
 Type=simple
 EnvironmentFile={{ data_dir }}/bowl-{{ cluster_name }}.env
-ExecStart={{ hodgepodge_src }}/go/bin/hodgepodge-bowl
+ExecStart={{ shardman_src }}/go/bin/shardman-bowl
 Restart=always
 RestartSec=10s
 

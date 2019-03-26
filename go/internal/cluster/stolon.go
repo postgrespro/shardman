@@ -18,8 +18,8 @@ import (
 	"crypto/tls"
 
 	etcdclientv3 "go.etcd.io/etcd/clientv3"
-	"postgrespro.ru/hodgepodge/internal/store"
-	tlswrap "postgrespro.ru/hodgepodge/internal/tls"
+	"postgrespro.ru/shardman/internal/store"
+	tlswrap "postgrespro.ru/shardman/internal/tls"
 )
 
 type StolonStore struct {
@@ -139,7 +139,7 @@ func (ss *StolonStore) Close() error {
 // PGHBA        []string          `json:"pgHBA,omitempty"`
 // }
 
-// get store conn info for given repgroup: it is either hodgepodge's store conn
+// get store conn info for given repgroup: it is either shardman's store conn
 // info or separately configured info. We need all this ugly stuff only because
 // we run e.g. stolonctl update directly instead of mocking with its private
 // data
@@ -173,7 +173,7 @@ func getConnArgs(hpc *StoreConnInfo, rg *RepGroup) []string {
 // Okay, let's try to avoid touching internals this time
 func StolonUpdate(hpc *StoreConnInfo, rg *RepGroup, rgid int, patch bool, spec *StolonSpec) error {
 	// Add repgroup-specific stuff
-	spec.PGParameters["hodgepodge.rgid"] = strconv.Itoa(rgid)
+	spec.PGParameters["shardman.rgid"] = strconv.Itoa(rgid)
 
 	specj, err := json.Marshal(spec)
 	if err != nil {

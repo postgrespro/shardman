@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/spf13/cobra"
-	"postgrespro.ru/hodgepodge/internal/ladle"
+	"postgrespro.ru/shardman/internal/ladle"
 )
 
 var fixRepGroupsCmd = &cobra.Command{

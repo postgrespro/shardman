@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"postgrespro.ru/hodgepodge/internal/ladle"
+	"postgrespro.ru/shardman/internal/ladle"
 )
 
 // init-specific options
