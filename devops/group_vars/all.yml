@@ -12,7 +12,8 @@ tmpfs: true
 
 ### provision things
 
-golang_link: https://dl.google.com/go/go1.11.2.linux-amd64.tar.gz
+golang_link: https://dl.google.com/go/go1.11.10.linux-amd64.tar.gz
+# golang_link: https://dl.google.com/go/go1.11.2.linux-amd64.tar.gz
 # golang_link: https://dl.google.com/go/go1.11.4.linux-amd64.tar.gz
 # golang_link: https://dl.google.com/go/go1.11.6.linux-amd64.tar.gz
 # golang_link: https://dl.google.com/go/go1.12.1.linux-amd64.tar.gz
