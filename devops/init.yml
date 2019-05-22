@@ -11,6 +11,11 @@
     tags:
     - user_dbus
 
+  - name: create systemd user units dir
+    file: path="{{ ansible_env.HOME }}/.config/systemd/user/" state=directory
+    tags:
+    - create_systemd_user_unit_dir
+
   - name: instantiate bowl unit file
     template:
       src: templates/shardman-bowl.service.j2
