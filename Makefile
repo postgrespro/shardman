@@ -7,8 +7,13 @@ DATA = $(EXTENSION)--$(EXTVERSION).sql
 REGRESS = shardman_installation
 
 MODULE_big = shardman
-OBJS = shardman.o meta.o postgres_fdw/postgres_fdw.o postgres_fdw/option.o postgres_fdw/deparse.o postgres_fdw/connection.o postgres_fdw/shippable.o $(WIN32RES)
-PGFILEDESC = "A bunch of stuff forming sharding"
+OBJS =	src/common.o src/dmq.o src/exchange.o src/expath.o src/hooks.o \
+		src/meta.o src/nodeDistPlanExec.o src/nodeDummyscan.o src/partutils.o \
+		src/planpass.o src/sbuf.o src/shardman.o src/stream.o $(WIN32RES)
+PGFILEDESC = "Shardman extension"
+
+fdw_srcdir = $(top_srcdir)/contrib/postgres_fdw/
+PG_CPPFLAGS = -I$(libpq_srcdir) -I$(fdw_srcdir) -L$(fdw_srcdir)
 
 ifndef USE_PGXS # hmm, user didn't requested to use pgxs
 # relative path to this makefile

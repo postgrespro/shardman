@@ -16,15 +16,18 @@
 #include "utils/fmgroids.h"
 #include "fmgr.h"
 #include "miscadmin.h"
+#include "postgres_fdw.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/guc.h"
 
-#include "shardman.h"
+#include "common.h"
+#include "dmq.h"
 #include "meta.h"
-#include "postgres_fdw/postgres_fdw.h"
+#include "planpass.h"
+#include "shardman.h"
 
 /* ensure that extension won't load against incompatible version of Postgres */
 PG_MODULE_MAGIC;
@@ -33,6 +36,9 @@ PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1(ex_sql);
 PG_FUNCTION_INFO_V1(bcst_sql);
 PG_FUNCTION_INFO_V1(bcst_all_sql);
+
+/* Execute portable query plan */
+PG_FUNCTION_INFO_V1(pg_exec_plan);
 
 /* GUC variables */
 int MyRgid;
@@ -49,7 +55,7 @@ static void ExLocal(char *sql);
 static void BcstAll(char *sql);
 static void Bcst(char *sql);
 static void ExServer(Oid serverid, char *sql);
-static void do_sql_command(ConnCacheEntry *entry, char *sql);
+static void do_sql_command(PGconn *conn, char *sql);
 static bool ShardmanLoaded(void);
 
 static ProcessUtility_hook_type PreviousProcessUtilityHook;
@@ -81,11 +87,34 @@ _PG_init()
 		0, /* flags */
 		NULL, NULL, NULL); /* hooks */
 
+	DefineCustomBoolVariable("enable_distributed_execution",
+							 "Use distributed execution.",
+							 NULL,
+							 &enable_distributed_execution,
+							 true,
+							 PGC_USERSET,
+							 GUC_NOT_IN_SAMPLE,
+							 NULL,
+							 NULL,
+							 NULL);
+
+	DefineCustomIntVariable("dmq_heartbeat_timeout",
+							"Max timeout between heartbeat messages",
+							NULL,
+							&dmq_heartbeat_timeout,
+							20000,
+							1, INT_MAX,
+							PGC_USERSET,
+							GUC_UNIT_MS,
+							NULL,
+							NULL,
+							NULL);
+
 	/* Install hooks */
 	PreviousProcessUtilityHook = ProcessUtility_hook;
 	ProcessUtility_hook = HPProcessUtility;
 
-	postgres_fdw_PG_init();
+	dmq_init("shardman");
 }
 
 static bool AmCoordinator(void)
@@ -411,11 +440,11 @@ static void Bcst(char *sql)
 static void ExServer(Oid serverid, char *sql)
 {
 	UserMapping *user;
-	ConnCacheEntry *entry;
+	PGconn *conn;
 	char *spathcmd;
 
 	user = GetUserMapping(GetUserId(), serverid);
-	entry = GetConnection(user, false);
+	conn = GetConnection(user, false);
 	pfree(user);
 
 	/*
@@ -423,22 +452,20 @@ static void ExServer(Oid serverid, char *sql)
 	 * and restore it back later
 	 */
 	spathcmd = psprintf("set search_path = %s", namespace_search_path);
-	do_sql_command(entry, spathcmd);
+	do_sql_command(conn, spathcmd);
 	pfree(spathcmd);
-	do_sql_command(entry, sql);
-	do_sql_command(entry, "set search_path = pg_catalog");
+	do_sql_command(conn, sql);
+	do_sql_command(conn, "set search_path = pg_catalog");
 }
 
 /* we could export this from connection.c */
-static void do_sql_command(ConnCacheEntry *entry, char *sql)
+static void do_sql_command(PGconn *conn, char *sql)
 {
-	PGconn *conn;
 	PGresult *res;
 
-	conn = ConnectionEntryGetConn(entry);
 	if (!PQsendQuery(conn, sql))
 		pgfdw_report_error(ERROR, NULL, conn, false, sql);
-	res = pgfdw_get_result(entry, sql);
+	res = pgfdw_get_result(conn, sql);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK &&
 		PQresultStatus(res) != PGRES_TUPLES_OK)
 		pgfdw_report_error(ERROR, res, conn, true, sql);
@@ -450,4 +477,27 @@ static bool ShardmanLoaded()
 {
 	Oid extension_oid = get_extension_oid("shardman", true);
 	return extension_oid != InvalidOid;
+}
+
+Datum
+pg_exec_plan(PG_FUNCTION_ARGS)
+{
+	char	*squery = TextDatumGetCString(PG_GETARG_DATUM(0)),
+			*splan = TextDatumGetCString(PG_GETARG_DATUM(1)),
+			*sparams = TextDatumGetCString(PG_GETARG_DATUM(2)),
+			*serverName = TextDatumGetCString(PG_GETARG_DATUM(3)),
+			*start_address;
+	PlannedStmt *pstmt;
+	ParamListInfo paramLI;
+
+	deserialize_plan(&squery, &splan, &sparams);
+
+	pstmt = (PlannedStmt *) stringToNode(splan);
+
+	/* Deserialize parameters of the query */
+	start_address = sparams;
+	paramLI = RestoreParamList(&start_address);
+
+	exec_plan(squery, pstmt, paramLI, serverName);
+	PG_RETURN_VOID();
 }

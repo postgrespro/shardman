@@ -1,0 +1,2172 @@
+diff --git a/contrib/postgres_fdw/connection.c b/contrib/postgres_fdw/connection.c
+index fe4893a8e0..2ba7530459 100644
+--- a/contrib/postgres_fdw/connection.c
++++ b/contrib/postgres_fdw/connection.c
+@@ -360,7 +360,10 @@ configure_remote_session(PGconn *conn)
+ 	int			remoteversion = PQserverVersion(conn);
+ 
+ 	/* Force the search path to contain only pg_catalog (see deparse.c) */
+-	do_sql_command(conn, "SET search_path = pg_catalog");
++	/*
++	 * Suppress for debug purposes
++	 * do_sql_command(conn, "SET search_path = pg_catalog");
++	 */
+ 
+ 	/*
+ 	 * Set remote timezone; this is basically just cosmetic, since all
+diff --git a/src/backend/access/common/printtup.c b/src/backend/access/common/printtup.c
+index f42d1c7e78..ebb07017dd 100644
+--- a/src/backend/access/common/printtup.c
++++ b/src/backend/access/common/printtup.c
+@@ -639,6 +639,48 @@ debugtup(TupleTableSlot *slot, DestReceiver *self)
+ 	return true;
+ }
+ 
++void
++logStartup(DestReceiver *self, int operation, TupleDesc typeinfo)
++{
++	int			natts = typeinfo->natts;
++	int			i;
++
++	/*
++	 * show the return type of the tuples
++	 */
++	printf("\t---- Result Attributes ----\n");
++	for (i = 0; i < natts; ++i)
++		printf("%s\t|\t", NameStr(TupleDescAttr(typeinfo, i)->attname));
++	printf("\n");
++}
++
++bool
++logtup(TupleTableSlot *slot, DestReceiver *self)
++{
++	TupleDesc	typeinfo = slot->tts_tupleDescriptor;
++	int			natts = typeinfo->natts;
++	int			i;
++	Datum		attr;
++	char	   *value;
++	bool		isnull;
++	Oid			typoutput;
++	bool		typisvarlena;
++
++	for (i = 0; i < natts; ++i)
++	{
++		attr = slot_getattr(slot, i + 1, &isnull);
++		if (isnull)
++			continue;
++		getTypeOutputInfo(TupleDescAttr(typeinfo, i)->atttypid,
++						  &typoutput, &typisvarlena);
++
++		value = OidOutputFunctionCall(typoutput, attr);
++		printf("%s\t|\t", value);
++	}
++	printf("\n");
++
++	return true;
++}
+ /* ----------------
+  *		printtup_internal_20 --- print a binary tuple in protocol 2.0
+  *
+diff --git a/src/backend/commands/opclasscmds.c b/src/backend/commands/opclasscmds.c
+index 6404188d02..06b819af5f 100644
+--- a/src/backend/commands/opclasscmds.c
++++ b/src/backend/commands/opclasscmds.c
+@@ -1599,6 +1599,58 @@ RemoveOpFamilyById(Oid opfamilyOid)
+ 	heap_close(rel, RowExclusiveLock);
+ }
+ 
++Oid
++get_family_oid(const char *opfname, const char *nspname, const char *ammth)
++{
++	Oid			nspoid,
++				amoid,
++				opfoid = InvalidOid;
++	HeapTuple	htup = NULL;
++
++	nspoid = LookupNamespaceNoError(nspname);
++	amoid = get_am_oid(ammth, false);
++
++	if (OidIsValid(nspoid) && OidIsValid(amoid))
++		htup = SearchSysCache3(OPFAMILYAMNAMENSP,
++							   ObjectIdGetDatum(amoid),
++							   PointerGetDatum(opfname),
++							   ObjectIdGetDatum(nspoid));
++
++	if (HeapTupleIsValid(htup))
++	{
++		opfoid = HeapTupleGetOid(htup);
++		ReleaseSysCache(htup);
++	}
++
++	return opfoid;
++}
++
++char *
++get_opfamily_name(Oid opfamilyOid, char **nspname, char **opfmethod)
++{
++	HeapTuple	tup;
++	char	   *opfname;
++	Oid			nspoid,
++				mthoid;
++
++	Assert(nspname != NULL);
++
++
++	tup = SearchSysCache1(OPFAMILYOID, ObjectIdGetDatum(opfamilyOid));
++	if (!HeapTupleIsValid(tup)) /* should not happen */
++		elog(ERROR, "cache lookup failed for opfamily %u", opfamilyOid);
++
++	opfname = pstrdup(NameStr(((Form_pg_opfamily) GETSTRUCT(tup))->opfname));
++	nspoid = ((Form_pg_opfamily) GETSTRUCT(tup))->opfnamespace;
++	*nspname = get_namespace_name(nspoid);
++
++	mthoid = ((Form_pg_opfamily) GETSTRUCT(tup))->opfmethod;
++	*opfmethod = get_am_name(mthoid);
++
++	ReleaseSysCache(tup);
++	return opfname;
++}
++
+ void
+ RemoveOpClassById(Oid opclassOid)
+ {
+diff --git a/src/backend/commands/user.c b/src/backend/commands/user.c
+index 71c5caa41b..54e013c474 100644
+--- a/src/backend/commands/user.c
++++ b/src/backend/commands/user.c
+@@ -1136,6 +1136,42 @@ DropRole(DropRoleStmt *stmt)
+ 	heap_close(pg_authid_rel, NoLock);
+ }
+ 
++char *
++get_rolename(Oid roleid)
++{
++	HeapTuple	tuple;
++	char		*rolename;
++
++	tuple = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleid));
++
++	if (!HeapTupleIsValid(tuple))
++		ereport(ERROR,
++				(errcode(ERRCODE_UNDEFINED_OBJECT),
++				 errmsg("role with oid\"%d\" does not exist", roleid)));
++
++	rolename = strdup(NameStr(((Form_pg_authid) GETSTRUCT(tuple))->rolname));
++	ReleaseSysCache(tuple);
++	return rolename;
++}
++
++Oid
++get_roleid(const char *rolename)
++{
++	HeapTuple	tuple;
++	Oid			roleid;
++
++	tuple = SearchSysCache1(AUTHNAME, CStringGetDatum(rolename));
++
++	if (!HeapTupleIsValid(tuple))
++		ereport(ERROR,
++				(errcode(ERRCODE_UNDEFINED_OBJECT),
++				 errmsg("role \"%s\" does not exist", rolename)));
++
++	roleid = HeapTupleGetOid(tuple);
++	ReleaseSysCache(tuple);
++	return roleid;
++}
++
+ /*
+  * Rename role
+  */
+diff --git a/src/backend/executor/nodeHashjoin.c b/src/backend/executor/nodeHashjoin.c
+index 5922e60eed..fa4241113c 100644
+--- a/src/backend/executor/nodeHashjoin.c
++++ b/src/backend/executor/nodeHashjoin.c
+@@ -147,7 +147,7 @@ static bool ExecHashJoinNewBatch(HashJoinState *hjstate);
+ static bool ExecParallelHashJoinNewBatch(HashJoinState *hjstate);
+ static void ExecParallelHashJoinPartitionOuter(HashJoinState *node);
+ 
+-
++static bool distributed = true;
+ /* ----------------------------------------------------------------
+  *		ExecHashJoinImpl
+  *
+@@ -243,7 +243,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
+ 					/* no chance to not build the hash table */
+ 					node->hj_FirstOuterTupleSlot = NULL;
+ 				}
+-				else if (parallel)
++				else if (parallel || distributed)
+ 				{
+ 					/*
+ 					 * The empty-outer optimization is not implemented for
+@@ -294,7 +294,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
+ 				 * doing a left outer join, we can quit without scanning the
+ 				 * outer relation.
+ 				 */
+-				if (hashtable->totalTuples == 0 && !HJ_FILL_OUTER(node))
++				if (!distributed && hashtable->totalTuples == 0 &&
++						!HJ_FILL_OUTER(node))
+ 					return NULL;
+ 
+ 				/*
+diff --git a/src/backend/nodes/outfuncs.c b/src/backend/nodes/outfuncs.c
+index f5d786d79a..19f7c52232 100644
+--- a/src/backend/nodes/outfuncs.c
++++ b/src/backend/nodes/outfuncs.c
+@@ -29,13 +29,235 @@
+ 
+ #include <ctype.h>
+ 
++#include "catalog/pg_type.h"
++#include "commands/dbcommands.h"
++#include "commands/defrem.h"
++#include "commands/user.h"
+ #include "lib/stringinfo.h"
+ #include "miscadmin.h"
+ #include "nodes/extensible.h"
+ #include "nodes/plannodes.h"
+ #include "nodes/relation.h"
+ #include "utils/datum.h"
++#include "utils/lsyscache.h"
+ #include "utils/rel.h"
++#include "utils/syscache.h"
++
++#define NSP_NAME(nspoid) (get_namespace_name(nspoid))
++#define OID_TYPES_NUM	(12)
++
++static const Oid oid_types[OID_TYPES_NUM] = {RELOID, TYPEOID, PROCOID, COLLOID,
++OPEROID, AUTHOID, LANGOID, AMOID, NAMESPACEOID, DATABASEOID, RULEOID, OPFAMILYOID};
++static void _printDatum(StringInfo str, Datum value, Oid typid);
++static bool portable_output = false;
++void
++set_portable_output(bool value)
++{
++	portable_output = value;
++}
++
++static void
++write_oid_field(StringInfo str, Oid oid)
++{
++	int			i;
++	char	   *rulename = NULL;
++	Oid			ev_class = InvalidOid;
++
++	if (!portable_output)
++	{
++		appendStringInfo(str, " %u", oid);
++		return;
++	}
++
++	appendStringInfo(str, " (");
++
++	if (!OidIsValid(oid))
++	{
++		/* Special case for invalid oid fields. For example, checkAsUser. */
++		appendStringInfo(str, "0 %u)", oid);
++		return;
++	}
++
++	for (i = 0; i < OID_TYPES_NUM; i++)
++		if (oid_types[i] != RULEOID)
++		{
++			if (SearchSysCacheExists1(oid_types[i], oid))
++				break;
++		}
++		else if ((rulename = get_rule_name(oid, &ev_class)) != NULL)
++			break;
++
++	if (i == OID_TYPES_NUM)
++	{
++		elog(LOG, "Unexpected oid type %d!", oid);
++//		Assert(0);
++		appendStringInfo(str, "0 %u)", oid);
++		return;
++	}
++
++	switch (oid_types[i])
++	{
++		case RELOID:
++			appendStringInfo(str, "%u %s %s", RELOID,
++							 get_namespace_name((get_rel_namespace((oid)))),
++							 get_rel_name((oid)));
++			break;
++
++		case TYPEOID:
++			appendStringInfo(str, "%u %s %s", TYPEOID,
++							 get_namespace_name(get_typ_namespace(oid)),
++							 get_typ_name(oid));
++
++			break;
++
++		case PROCOID:
++			{
++				Oid		   *argtypes;
++				int			i,
++							nargs;
++
++				get_func_signature(oid, &argtypes, &nargs);
++				appendStringInfo(str, "%u %s %s %d", PROCOID,
++								 NSP_NAME(get_func_namespace(oid)),
++								 get_func_name(oid),
++								 nargs);
++
++				for (i = 0; i < nargs; i++)
++				{
++					appendStringInfoChar(str, ' ');
++					outToken(str, NSP_NAME(get_typ_namespace(argtypes[i])));
++					appendStringInfoChar(str, ' ');
++					outToken(str, get_typ_name(argtypes[i]));
++				}
++			}
++			break;
++
++		case COLLOID:
++			appendStringInfo(str, "%u ", COLLOID);
++			outToken(str, NSP_NAME(get_collation_namespace(oid)));
++			appendStringInfoChar(str, ' ');
++			outToken(str, get_collation_name(oid));
++			appendStringInfo(str, " %d", get_collation_encoding(oid));
++			break;
++
++		case OPEROID:
++			{
++				Oid			oprleft,
++							oprright;
++
++				appendStringInfo(str, "%u ", OPEROID);
++				outToken(str, NSP_NAME(get_opnamespace(oid)));
++				appendStringInfoChar(str, ' ');
++				outToken(str, get_opname(oid));
++				appendStringInfoChar(str, ' ');
++				op_input_types(oid, &oprleft, &oprright);
++				outToken(str, OidIsValid(oprleft) ?
++						 NSP_NAME(get_typ_namespace(oprleft)) : NULL);
++				appendStringInfoChar(str, ' ');
++				outToken(str, OidIsValid(oprleft) ? get_typ_name(oprleft) : NULL);
++				appendStringInfoChar(str, ' ');
++				outToken(str, OidIsValid(oprright) ?
++						 NSP_NAME(get_typ_namespace(oprright)) : NULL);
++				appendStringInfoChar(str, ' ');
++				outToken(str, OidIsValid(oprright) ? get_typ_name(oprright) : NULL);
++			}
++			break;
++
++		case AUTHOID:
++			appendStringInfo(str, "%u %s", AUTHOID, get_rolename(oid));
++			break;
++
++		case LANGOID:
++			appendStringInfo(str, "%u %s", LANGOID, get_language_name(oid, false));
++			break;
++
++		case AMOID:
++			appendStringInfo(str, "%u %s", AMOID, get_am_name(oid));
++			break;
++
++		case NAMESPACEOID:
++			appendStringInfo(str, "%u %s", NAMESPACEOID, get_namespace_name_or_temp(oid));
++			break;
++
++		case DATABASEOID:
++			appendStringInfo(str, "%u %s", DATABASEOID, get_database_name(oid));
++			break;
++
++		case RULEOID:
++			Assert(rulename != NULL);
++			appendStringInfo(str, "%u %s %s %s", RULEOID, rulename,
++							 NSP_NAME(get_rel_namespace(ev_class)),
++							 get_rel_name(ev_class));
++			break;
++
++		case OPFAMILYOID:
++			{
++				char	   *opfname = NULL,
++						   *nspname = NULL,
++						   *amname = NULL;
++
++				opfname = get_opfamily_name(oid, &nspname, &amname);
++				Assert(opfname && nspname && amname);
++
++				appendStringInfo(str, "%u %s %s %s", OPFAMILYOID, opfname,
++								 nspname, amname);
++			}
++			break;
++
++		default:
++			Assert(0);
++			break;
++	}
++	appendStringInfo(str, ")");
++}
++
++/*
++ * Output value in text format
++ */
++static void
++_printDatum(StringInfo str, Datum value, Oid typid)
++{
++	Oid			typOutput;
++	bool		typIsVarlena;
++	FmgrInfo	finfo;
++	Datum		tmpval;
++	char	   *textvalue;
++	int			saveDateStyle;
++
++	/* Get output function for the type */
++	getTypeOutputInfo(typid, &typOutput, &typIsVarlena);
++	fmgr_info(typOutput, &finfo);
++
++	/* Detoast value if needed */
++	if (typIsVarlena)
++		tmpval = PointerGetDatum(PG_DETOAST_DATUM(value));
++	else
++		tmpval = value;
++
++	/*
++	 * It was found that if configuration setting for date style is
++	 * "postgres,ymd" the output dates have format DD-MM-YYYY and they can not
++	 * be parsed correctly by receiving party. So force ISO format YYYY-MM-DD
++	 * in internal cluster communications, these values are always parsed
++	 * correctly.
++	 */
++	saveDateStyle = DateStyle;
++	DateStyle = USE_ISO_DATES;
++
++	if (typid == OIDOID)
++	{
++		/* Const type is "OID". Need to parse. */
++		Oid			oid = DatumGetObjectId(value);
++
++		write_oid_field(str, oid);
++	}
++	else
++	{
++		textvalue = DatumGetCString(FunctionCall1(&finfo, tmpval));
++		outToken(str, textvalue);
++	}
++	DateStyle = saveDateStyle;
++}
+ 
+ static void outChar(StringInfo str, char c);
+ 
+@@ -55,6 +277,13 @@ static void outChar(StringInfo str, char c);
+ #define WRITE_INT_FIELD(fldname) \
+ 	appendStringInfo(str, " :" CppAsString(fldname) " %d", node->fldname)
+ 
++#define WRITE_INT_ARRAY(fldname, len) \
++	do { \
++		appendStringInfoString(str, " :" CppAsString(fldname) " "); \
++		for (int i = 0; i < len; i++) \
++			appendStringInfo(str, " %d", node->fldname[i]); \
++	} while(0)
++
+ /* Write an unsigned integer field (anything written as ":fldname %u") */
+ #define WRITE_UINT_FIELD(fldname) \
+ 	appendStringInfo(str, " :" CppAsString(fldname) " %u", node->fldname)
+@@ -66,7 +295,17 @@ static void outChar(StringInfo str, char c);
+ 
+ /* Write an OID field (don't hard-wire assumption that OID is same as uint) */
+ #define WRITE_OID_FIELD(fldname) \
+-	appendStringInfo(str, " :" CppAsString(fldname) " %u", node->fldname)
++	do { \
++		appendStringInfo(str, " :%s", CppAsString(fldname)); \
++		write_oid_field(str, node->fldname); \
++	} while (0)
++
++#define WRITE_OID_ARRAY(fldname, len) \
++	do { \
++		appendStringInfoString(str, " :" CppAsString(fldname) " "); \
++		for (int i = 0; i < len; i++) \
++			appendStringInfo(str, " %u", node->fldname[i]); \
++	} while(0)
+ 
+ /* Write a long-integer field */
+ #define WRITE_LONG_FIELD(fldname) \
+@@ -196,7 +435,7 @@ _outList(StringInfo str, const List *node)
+ 		else if (IsA(node, IntList))
+ 			appendStringInfo(str, " %d", lfirst_int(lc));
+ 		else if (IsA(node, OidList))
+-			appendStringInfo(str, " %u", lfirst_oid(lc));
++			write_oid_field(str, lfirst_oid(lc));
+ 		else
+ 			elog(ERROR, "unrecognized list node type: %d",
+ 				 (int) node->type);
+@@ -1185,6 +1424,8 @@ _outConst(StringInfo str, const Const *node)
+ 	appendStringInfoString(str, " :constvalue ");
+ 	if (node->constisnull)
+ 		appendStringInfoString(str, "<>");
++	else if (portable_output)
++		_printDatum(str, node->constvalue, node->consttype);
+ 	else
+ 		outDatum(str, node->constvalue, node->constlen, node->constbyval);
+ }
+@@ -2390,6 +2631,7 @@ _outIndexOptInfo(StringInfo str, const IndexOptInfo *node)
+ 	WRITE_FLOAT_FIELD(tuples, "%.0f");
+ 	WRITE_INT_FIELD(tree_height);
+ 	WRITE_INT_FIELD(ncolumns);
++	WRITE_INT_FIELD(nkeycolumns);
+ 	/* array fields aren't really worth the trouble to print */
+ 	WRITE_OID_FIELD(relam);
+ 	/* indexprs is redundant since we print indextlist */
+@@ -2400,6 +2642,11 @@ _outIndexOptInfo(StringInfo str, const IndexOptInfo *node)
+ 	WRITE_BOOL_FIELD(unique);
+ 	WRITE_BOOL_FIELD(immediate);
+ 	WRITE_BOOL_FIELD(hypothetical);
++
++	WRITE_INT_ARRAY(indexkeys, node->ncolumns);
++	WRITE_OID_ARRAY(opfamily, node->ncolumns);
++	WRITE_OID_ARRAY(opcintype, node->ncolumns);
++	WRITE_OID_ARRAY(indexcollations, node->ncolumns);
+ 	/* we don't bother with fields copied from the index AM's API struct */
+ }
+ 
+@@ -4382,6 +4629,9 @@ nodeToString(const void *obj)
+ 
+ 	/* see stringinfo.h for an explanation of this maneuver */
+ 	initStringInfo(&str);
++	/* Add type of serialized plan. */
++	if (portable_output)
++		appendStringInfo(&str, "%s ", "portable");
+ 	outNode(&str, obj);
+ 	return str.data;
+ }
+diff --git a/src/backend/nodes/read.c b/src/backend/nodes/read.c
+index a775f9120e..1caf7852ec 100644
+--- a/src/backend/nodes/read.c
++++ b/src/backend/nodes/read.c
+@@ -31,6 +31,9 @@
+ static char *pg_strtok_ptr = NULL;
+ 
+ 
++#define nullable_string(token,length)  \
++	((length) == 0 ? NULL : debackslash(token, length))
++
+ /*
+  * stringToNode -
+  *	  returns a Node with a given legal ASCII representation
+@@ -40,6 +43,7 @@ stringToNode(char *str)
+ {
+ 	char	   *save_strtok;
+ 	void	   *retval;
++	bool		temp;
+ 
+ 	/*
+ 	 * We save and restore the pre-existing state of pg_strtok. This makes the
+@@ -51,10 +55,26 @@ stringToNode(char *str)
+ 
+ 	pg_strtok_ptr = str;		/* point pg_strtok at the string to read */
+ 
++	if (pg_strtok_ptr[0] != 'p')
++		temp = set_portable_input(false);
++	else
++	{
++		int tok_len;
++		char *token = pg_strtok(&tok_len);
++		char *type;
++
++		type = nullable_string(token, tok_len);
++		Assert(token != NULL);
++		if (strcmp(type, "portable") == 0)
++			temp = set_portable_input(true);
++		else
++			elog(ERROR, "Incorrect serialized plan. token=%s", token);
++	}
++
+ 	retval = nodeRead(NULL, 0); /* do the reading */
+ 
+ 	pg_strtok_ptr = save_strtok;
+-
++	set_portable_input(temp);
+ 	return retval;
+ }
+ 
+@@ -331,17 +351,13 @@ nodeRead(char *token, int tok_len)
+ 					for (;;)
+ 					{
+ 						Oid			val;
+-						char	   *endptr;
+ 
+ 						token = pg_strtok(&tok_len);
+ 						if (token == NULL)
+ 							elog(ERROR, "unterminated List structure");
+ 						if (token[0] == ')')
+ 							break;
+-						val = (Oid) strtoul(token, &endptr, 10);
+-						if (endptr != token + tok_len)
+-							elog(ERROR, "unrecognized OID: \"%.*s\"",
+-								 tok_len, token);
++						val = read_oid_field(&token, &tok_len);
+ 						l = lappend_oid(l, val);
+ 					}
+ 				}
+diff --git a/src/backend/nodes/readfuncs.c b/src/backend/nodes/readfuncs.c
+index 77910d909b..dd2b9cb056 100644
+--- a/src/backend/nodes/readfuncs.c
++++ b/src/backend/nodes/readfuncs.c
+@@ -28,6 +28,7 @@
+ 
+ #include <math.h>
+ 
++#include "catalog/pg_type.h"
+ #include "fmgr.h"
+ #include "miscadmin.h"
+ #include "nodes/extensible.h"
+@@ -36,6 +37,32 @@
+ #include "nodes/readfuncs.h"
+ #include "utils/builtins.h"
+ 
++/* Portable-related dependencies */
++#include "catalog/namespace.h"
++#include "catalog/pg_type.h"
++#include "commands/dbcommands.h"
++#include "commands/defrem.h"
++#include "commands/proclang.h"
++#include "commands/user.h"
++#include "rewrite/rewriteSupport.h"
++#include "utils/builtins.h"
++#include "utils/lsyscache.h"
++#include "utils/syscache.h"
++
++
++#define NSP_OID(nspname) LookupNamespaceNoError(nspname)
++
++static Datum scanDatum(Oid typid, int typmod);
++
++static bool portable_input = false;
++
++bool
++set_portable_input(bool value)
++{
++	bool	temp = portable_input;
++	portable_input = value;
++	return temp;
++}
+ 
+ /*
+  * Macros to simplify reading of different kinds of fields.  Use these
+@@ -87,8 +114,18 @@
+ /* Read an OID field (don't hard-wire assumption that OID is same as uint) */
+ #define READ_OID_FIELD(fldname) \
+ 	token = pg_strtok(&length);		/* skip :fldname */ \
+-	token = pg_strtok(&length);		/* get field value */ \
+-	local_node->fldname = atooid(token)
++	token = pg_strtok(&length);		/* set tooken to begin of OID */ \
++	local_node->fldname = read_oid_field(&token, &length);
++
++/* Read an oid array */
++#define READ_OID_ARRAY(fldname, len) \
++	token = pg_strtok(&length);		/* skip :fldname */ \
++	local_node->fldname = readOidCols(len);
++
++/* Read an int array */
++#define READ_INT_ARRAY(fldname, len) \
++	token = pg_strtok(&length);		/* skip :fldname */ \
++	local_node->fldname = readIntCols(len);
+ 
+ /* Read a char field (ie, one ascii character) */
+ #define READ_CHAR_FIELD(fldname) \
+@@ -126,7 +163,7 @@
+ 	token = pg_strtok(&length);		/* skip :fldname */ \
+ 	token = pg_strtok(&length);		/* get field value */ \
+ 	(void) token;				/* in case not used elsewhere */ \
+-	local_node->fldname = -1	/* set field to "unknown" */
++	local_node->fldname = atoi(token);	/* set field to "unknown" */
+ 
+ /* Read a Node field */
+ #define READ_NODE_FIELD(fldname) \
+@@ -553,6 +590,9 @@ _readConst(void)
+ 	token = pg_strtok(&length); /* skip :constvalue */
+ 	if (local_node->constisnull)
+ 		token = pg_strtok(&length); /* skip "<>" */
++	else if (portable_input)
++		local_node->constvalue = scanDatum(local_node->consttype,
++										   local_node->consttypmod);
+ 	else
+ 		local_node->constvalue = readDatum(local_node->constbyval);
+ 
+@@ -2527,6 +2567,118 @@ _readPartitionRangeDatum(void)
+ 	READ_DONE();
+ }
+ 
++/*
++ * _readRelOptInfo
++ */
++static RelOptInfo *
++_readRelOptInfo(void)
++{
++	READ_LOCALS(RelOptInfo);
++
++	READ_ENUM_FIELD(reloptkind, RelOptKind);
++	READ_BITMAPSET_FIELD(relids);
++	READ_FLOAT_FIELD(rows);
++	READ_BOOL_FIELD(consider_startup);
++	READ_BOOL_FIELD(consider_param_startup);
++	READ_BOOL_FIELD(consider_parallel);
++	READ_NODE_FIELD(reltarget);
++	READ_NODE_FIELD(pathlist);
++	READ_NODE_FIELD(ppilist);
++	READ_NODE_FIELD(partial_pathlist);
++	READ_NODE_FIELD(cheapest_startup_path);
++	READ_NODE_FIELD(cheapest_total_path);
++	READ_NODE_FIELD(cheapest_unique_path);
++	READ_NODE_FIELD(cheapest_parameterized_paths);
++	READ_BITMAPSET_FIELD(direct_lateral_relids);
++	READ_BITMAPSET_FIELD(lateral_relids);
++	READ_UINT_FIELD(relid);
++	READ_OID_FIELD(reltablespace);
++	READ_ENUM_FIELD(rtekind, RTEKind);
++	READ_INT_FIELD(min_attr);
++	READ_INT_FIELD(max_attr);
++	READ_NODE_FIELD(lateral_vars);
++	READ_BITMAPSET_FIELD(lateral_referencers);
++	READ_NODE_FIELD(indexlist);
++	READ_NODE_FIELD(statlist);
++	READ_UINT_FIELD(pages);
++	READ_FLOAT_FIELD(tuples);
++	READ_FLOAT_FIELD(allvisfrac);
++	READ_NODE_FIELD(subroot);
++	READ_NODE_FIELD(subplan_params);
++	READ_INT_FIELD(rel_parallel_workers);
++	READ_OID_FIELD(serverid);
++	READ_OID_FIELD(userid);
++	READ_BOOL_FIELD(useridiscurrent);
++	/* we don't try to print fdwroutine or fdw_private */
++	/* can't print unique_for_rels/non_unique_for_rels; BMSes aren't Nodes */
++	READ_NODE_FIELD(baserestrictinfo);
++	READ_UINT_FIELD(baserestrict_min_security);
++	READ_NODE_FIELD(joininfo);
++	READ_BOOL_FIELD(has_eclass_joins);
++	READ_BOOL_FIELD(consider_partitionwise_join);
++	READ_BITMAPSET_FIELD(top_parent_relids);
++	READ_NODE_FIELD(partitioned_child_rels);
++
++	READ_DONE();
++}
++
++static IndexOptInfo *
++_readIndexOptInfo(void)
++{
++	READ_LOCALS(IndexOptInfo);
++
++	READ_OID_FIELD(indexoid);
++	READ_UINT_FIELD(pages);
++	READ_FLOAT_FIELD(tuples);
++	READ_INT_FIELD(tree_height);
++	READ_INT_FIELD(ncolumns);
++	READ_INT_FIELD(nkeycolumns);
++	READ_OID_FIELD(relam);
++	READ_NODE_FIELD(indpred);
++	READ_NODE_FIELD(indextlist);
++	READ_NODE_FIELD(indrestrictinfo);
++	READ_BOOL_FIELD(predOK);
++	READ_BOOL_FIELD(unique);
++	READ_BOOL_FIELD(immediate);
++	READ_BOOL_FIELD(hypothetical);
++	READ_INT_ARRAY(indexkeys, local_node->ncolumns);
++	READ_OID_ARRAY(opfamily, local_node->ncolumns);
++	READ_OID_ARRAY(opcintype, local_node->ncolumns);
++	READ_OID_ARRAY(indexcollations, local_node->ncolumns);
++
++	READ_DONE();
++}
++
++static RestrictInfo *
++_readRestrictInfo(void)
++{
++	READ_LOCALS(RestrictInfo);
++
++	READ_NODE_FIELD(clause);
++	READ_BOOL_FIELD(is_pushed_down);
++	READ_BOOL_FIELD(outerjoin_delayed);
++	READ_BOOL_FIELD(can_join);
++	READ_BOOL_FIELD(pseudoconstant);
++	READ_BOOL_FIELD(leakproof);
++	READ_UINT_FIELD(security_level);
++	READ_BITMAPSET_FIELD(clause_relids);
++	READ_BITMAPSET_FIELD(required_relids);
++	READ_BITMAPSET_FIELD(outer_relids);
++	READ_BITMAPSET_FIELD(nullable_relids);
++	READ_BITMAPSET_FIELD(left_relids);
++	READ_BITMAPSET_FIELD(right_relids);
++	READ_NODE_FIELD(orclause);
++	READ_FLOAT_FIELD(norm_selec);
++	READ_FLOAT_FIELD(outer_selec);
++	READ_NODE_FIELD(mergeopfamilies);
++	READ_NODE_FIELD(left_em);
++	READ_NODE_FIELD(right_em);
++	READ_BOOL_FIELD(outer_is_left);
++	READ_OID_FIELD(hashjoinoperator);
++
++	READ_DONE();
++}
++
+ /*
+  * parseNodeString
+  *
+@@ -2786,6 +2938,12 @@ parseNodeString(void)
+ 		return_value = _readPartitionBoundSpec();
+ 	else if (MATCH("PARTITIONRANGEDATUM", 19))
+ 		return_value = _readPartitionRangeDatum();
++	else if (MATCH("RELOPTINFO", 10))
++		return_value = _readRelOptInfo();
++	else if (MATCH("INDEXOPTINFO", 12))
++		return_value = _readIndexOptInfo();
++	else if (MATCH("RESTRICTINFO", 12))
++			return_value = _readRestrictInfo();
+ 	else
+ 	{
+ 		elog(ERROR, "badly formatted node string \"%.32s\"...", token);
+@@ -2952,3 +3110,316 @@ readBoolCols(int numCols)
+ 
+ 	return bool_vals;
+ }
++
++#define atooid(x)  ((Oid) strtoul((x), NULL, 10))
++
++Oid
++read_oid_field(char **token, int *length)
++{
++	Oid			oid_type,
++				oid = InvalidOid;
++
++	Assert((token != NULL) && (length != NULL));
++
++	if (!portable_input)
++		return atooid(*token);
++
++	Assert((*token)[0] == '(');
++	*token = pg_strtok(length);
++	oid_type = atooid(*token);
++
++	/*
++	 * It is undefined oid type
++	 */
++	if (!OidIsValid(oid_type))
++	{
++		Oid			oid;
++
++		*token = pg_strtok(length);
++		oid = atooid(*token);
++		*token = pg_strtok(length);
++		Assert((*token)[0] == ')');
++		return oid;
++	}
++
++	switch (oid_type)
++	{
++		case RELOID:
++			{
++				char	   *relname,
++						   *nspname;
++				Oid			rel_nsp_oid;
++
++				*token = pg_strtok(length);		/* Switch to namespace name */
++				nspname = nullable_string(*token, *length);
++				rel_nsp_oid = LookupNamespaceNoError(nspname);
++				*token = pg_strtok(length);		/* Switch to relname */
++				relname = nullable_string(*token, *length);
++				oid = get_relname_relid(relname, rel_nsp_oid);
++				break;
++			}
++		case TYPEOID:
++			{
++				char	   *nspname;	/* namespace name */
++				char	   *typname;	/* data type name */
++
++				*token = pg_strtok(length);		/* get nspname */
++				nspname = nullable_string(*token, *length);
++				*token = pg_strtok(length);		/* get typname */
++				typname = nullable_string(*token, *length);
++				if (typname)
++				{
++					oid = get_typname_typid(typname, LookupNamespaceNoError((nspname)));
++					if (!OidIsValid((oid)))
++						elog(WARNING, "could not find OID for type %s.%s",
++							 nspname, typname);
++				}
++				else
++					oid = InvalidOid;
++			}
++			break;
++
++		case PROCOID:
++			{
++				char	   *nspname;	/* namespace name */
++				char	   *funcname;	/* function name */
++				int			nargs;		/* number of arguments */
++				Oid		   *argtypes;	/* argument types */
++
++				*token = pg_strtok(length);		/* get nspname */
++				nspname = nullable_string(*token, *length);
++				*token = pg_strtok(length);		/* get funcname */
++				funcname = nullable_string(*token, *length);
++				*token = pg_strtok(length);		/* get nargs */
++				nargs = atoi(*token);
++
++				if (funcname)
++				{
++					int			i;
++
++					argtypes = palloc(nargs * sizeof(Oid));
++					for (i = 0; i < nargs; i++)
++					{
++						char	   *typnspname; /* argument type namespace */
++						char	   *typname;	/* argument type name */
++
++						*token = pg_strtok(length);		/* get type nspname */
++						typnspname = nullable_string(*token, *length);
++						*token = pg_strtok(length);		/* get type name */
++						typname = nullable_string(*token, *length);
++						argtypes[i] = get_typname_typid(typname,
++														NSP_OID(typnspname));
++					}
++					oid = get_funcid(funcname, buildoidvector(argtypes, nargs), NSP_OID(nspname));
++				}
++				else
++					oid = InvalidOid;
++			}
++			break;
++
++		case COLLOID:
++			{
++				char	   *nspname;	/* namespace name */
++				char	   *collname;	/* collation name */
++				int			collencoding;		/* collation encoding */
++
++				*token = pg_strtok(length);		/* get nspname */
++				nspname = nullable_string(*token, *length);
++				*token = pg_strtok(length);		/* get collname */
++				collname = nullable_string(*token, *length);
++				*token = pg_strtok(length);		/* get collencoding */
++				collencoding = atoi(*token);
++				if (collname)
++					oid = get_collid(collname, collencoding, NSP_OID(nspname));
++				else
++					oid = InvalidOid;
++			}
++			break;
++
++		case OPEROID:
++			{
++				char	   *nspname;	/* namespace name */
++				char	   *oprname;	/* operator name */
++				char	   *leftnspname;		/* left type namespace */
++				char	   *leftname;	/* left type name */
++				Oid			oprleft;	/* left type */
++				char	   *rightnspname;		/* right type namespace */
++				char	   *rightname;	/* right type name */
++				Oid			oprright;	/* right type */
++
++				*token = pg_strtok(length);		/* get nspname */
++				nspname = nullable_string(*token, *length);
++				*token = pg_strtok(length);		/* get operator name */
++				oprname = nullable_string(*token, *length);
++				*token = pg_strtok(length);		/* left type namespace */
++				leftnspname = nullable_string(*token, *length);
++				*token = pg_strtok(length);		/* left type name */
++				leftname = nullable_string(*token, *length);
++				*token = pg_strtok(length);		/* right type namespace */
++				rightnspname = nullable_string(*token, *length);
++				*token = pg_strtok(length);		/* right type name */
++				rightname = nullable_string(*token, *length);
++				if (oprname)
++				{
++					if (leftname)
++						oprleft = get_typname_typid(leftname, NSP_OID(leftnspname));
++					else
++						oprleft = InvalidOid;
++					if (rightname)
++						oprright = get_typname_typid(rightname, NSP_OID(rightnspname));
++					else
++						oprright = InvalidOid;
++					oid = get_operid(oprname, oprleft, oprright, NSP_OID(nspname));
++				}
++				else
++					oid = InvalidOid;
++			}
++			break;
++
++		case AUTHOID:
++			{
++				char	   *rolename;
++
++				*token = pg_strtok(length);		/* get nspname */
++				rolename = nullable_string(*token, *length);
++				oid = get_roleid(rolename);
++			}
++			break;
++
++		case LANGOID:
++			{
++				char	   *langname;
++
++				*token = pg_strtok(length);		/* get nspname */
++				langname = nullable_string(*token, *length);
++				oid = get_language_oid(langname, false);
++			}
++			break;
++
++		case AMOID:
++			{
++				char	   *amname;
++
++				*token = pg_strtok(length);		/* get nspname */
++				amname = nullable_string(*token, *length);
++				oid = get_am_oid(amname, false);
++			}
++			break;
++
++		case NAMESPACEOID:
++			{
++				char	   *nspname;
++
++				*token = pg_strtok(length);		/* get nspname */
++				nspname = nullable_string(*token, *length);
++				oid = LookupNamespaceNoError(nspname);
++			}
++			break;
++
++		case DATABASEOID:
++			{
++				char	   *dbname;
++
++				*token = pg_strtok(length);		/* get nspname */
++				dbname = nullable_string(*token, *length);
++				oid = get_database_oid(dbname, false);
++			}
++			break;
++
++		case RULEOID:
++			{
++				char	   *rulename,
++						   *relname,
++						   *nspname;
++				Oid			nspoid,
++							reloid;
++
++				*token = pg_strtok(length);		/* get name of the rule */
++				rulename = nullable_string(*token, *length);
++
++				*token = pg_strtok(length);
++				nspname = nullable_string(*token, *length);
++				nspoid = LookupNamespaceNoError(nspname);
++				*token = pg_strtok(length);
++				relname = nullable_string(*token, *length);
++				reloid = get_relname_relid(relname, nspoid);
++
++				oid = get_rewrite_oid(reloid, rulename, false);
++			}
++			break;
++
++		case OPFAMILYOID:
++			{
++				char	   *opfname = NULL,
++						   *nspname = NULL,
++						   *amname = NULL;
++
++				*token = pg_strtok(length);
++				opfname = nullable_string(*token, *length);
++				*token = pg_strtok(length);
++				nspname = nullable_string(*token, *length);
++				*token = pg_strtok(length);
++				amname = nullable_string(*token, *length);
++				oid = get_family_oid(opfname, nspname, amname);
++			}
++			break;
++
++		default:
++			Assert(0);
++			break;
++	}
++	*token = pg_strtok(length);
++	Assert((*token)[0] == ')');
++	return oid;
++}
++
++/*
++ * scanDatum
++ *
++ * Recreate Datum from the text format understandable by the input function
++ * of the specified data type.
++ */
++static Datum
++scanDatum(Oid typid, int typmod)
++{
++	Oid			typInput;
++	Oid			typioparam;
++	FmgrInfo	finfo;
++	FunctionCallInfoData fcinfo;
++	char	   *value;
++	Datum		res;
++
++	READ_TEMP_LOCALS();
++
++	if (typid == OIDOID)
++	{
++		token = pg_strtok(&length);
++		return read_oid_field(&token, &length);
++	}
++
++	/* Get input function for the type */
++	getTypeInputInfo(typid, &typInput, &typioparam);
++	fmgr_info(typInput, &finfo);
++
++	/* Read the value */
++	token = pg_strtok(&length);
++	value = nullable_string(token, length);
++
++	/* The value can not be NULL, so we actually received empty string */
++	if (value == NULL)
++		value = "";
++
++	/* Invoke input function */
++	InitFunctionCallInfoData(fcinfo, &finfo, 3, InvalidOid, NULL, NULL);
++
++	fcinfo.arg[0] = CStringGetDatum(value);
++	fcinfo.arg[1] = ObjectIdGetDatum(typioparam);
++	fcinfo.arg[2] = Int32GetDatum(typmod);
++	fcinfo.argnull[0] = false;
++	fcinfo.argnull[1] = false;
++	fcinfo.argnull[2] = false;
++
++	res = FunctionCallInvoke(&fcinfo);
++
++	return res;
++}
+diff --git a/src/backend/storage/ipc/latch.c b/src/backend/storage/ipc/latch.c
+index e6706f7fb8..93dc2f0bda 100644
+--- a/src/backend/storage/ipc/latch.c
++++ b/src/backend/storage/ipc/latch.c
+@@ -77,6 +77,11 @@ struct WaitEventSet
+ 	int			nevents;		/* number of registered events */
+ 	int			nevents_space;	/* maximum number of events in this set */
+ 
++	/*
++	 * L1-list of free events linked by "pos" and terminated by -1.
++	 */
++	int			free_events;
++
+ 	/*
+ 	 * Array, of nevents_space length, storing the definition of events this
+ 	 * set is waiting for.
+@@ -92,6 +97,11 @@ struct WaitEventSet
+ 	Latch	   *latch;
+ 	int			latch_pos;
+ 
++#if defined (WITH_RSOCKET)
++	/* rpoll expects events to be waited on every rpoll() call, prepare once */
++	struct pollfd *rpollfds;
++#endif
++
+ #if defined(WAIT_USE_EPOLL)
+ 	int			epoll_fd;
+ 	/* epoll_wait returns events in a user provided arrays, allocate once */
+@@ -129,13 +139,20 @@ static void drainSelfPipe(void);
+ #if defined(WAIT_USE_EPOLL)
+ static void WaitEventAdjustEpoll(WaitEventSet *set, WaitEvent *event, int action);
+ #elif defined(WAIT_USE_POLL)
+-static void WaitEventAdjustPoll(WaitEventSet *set, WaitEvent *event);
++static void WaitEventAdjustPoll(WaitEventSet *set, WaitEvent *event, bool remove);
+ #elif defined(WAIT_USE_WIN32)
+-static void WaitEventAdjustWin32(WaitEventSet *set, WaitEvent *event);
++static void WaitEventAdjustWin32(WaitEventSet *set, WaitEvent *event, bool remove);
++#endif
++#if defined (WITH_RSOCKET)
++static void WaitEventAdjustRpoll(WaitEventSet *set, WaitEvent *event);
+ #endif
+ 
+ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
+ 					  WaitEvent *occurred_events, int nevents);
++#if defined (WITH_RSOCKET)
++static inline int WaitEventSetWaitBlockForRsocket(WaitEventSet *set,
++					  int cur_timeout, WaitEvent *occurred_events, int nevents);
++#endif
+ 
+ /*
+  * Initialize the process-local latch infrastructure.
+@@ -336,8 +353,8 @@ int
+ WaitLatch(volatile Latch *latch, int wakeEvents, long timeout,
+ 		  uint32 wait_event_info)
+ {
+-	return WaitLatchOrSocket(latch, wakeEvents, PGINVALID_SOCKET, timeout,
+-							 wait_event_info);
++	return WaitLatchOrSocket(latch, wakeEvents, PGINVALID_SOCKET,
++							 timeout, wait_event_info);
+ }
+ 
+ /*
+@@ -359,7 +376,9 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
+ 	int			ret = 0;
+ 	int			rc;
+ 	WaitEvent	event;
+-	WaitEventSet *set = CreateWaitEventSet(CurrentMemoryContext, 3);
++	WaitEventSet *set;
++
++	set = CreateWaitEventSet(CurrentMemoryContext, 3);
+ 
+ 	if (wakeEvents & WL_TIMEOUT)
+ 		Assert(timeout >= 0);
+@@ -562,6 +581,7 @@ CreateWaitEventSet(MemoryContext context, int nevents)
+ 
+ 	set->latch = NULL;
+ 	set->nevents_space = nevents;
++	set->free_events = -1;
+ 
+ #if defined(WAIT_USE_EPOLL)
+ #ifdef EPOLL_CLOEXEC
+@@ -594,6 +614,49 @@ CreateWaitEventSet(MemoryContext context, int nevents)
+ 	return set;
+ }
+ 
++#if defined (WITH_RSOCKET)
++/*
++ * Create a WaitEventSet with space for nevents different events to wait for.
++ *
++ * These events can then be efficiently waited upon together, using
++ * WaitEventSetWait().
++ */
++WaitEventSet *
++CreateWaitEventSetForRsocket(MemoryContext context, int nevents)
++{
++	WaitEventSet *set;
++	char	   *data;
++	Size		sz = 0;
++
++	/*
++	 * Use MAXALIGN size/alignment to guarantee that later uses of memory are
++	 * aligned correctly. E.g. epoll_event might need 8 byte alignment on some
++	 * platforms, but earlier allocations like WaitEventSet and WaitEvent
++	 * might not sized to guarantee that when purely using sizeof().
++	 */
++	sz += MAXALIGN(sizeof(WaitEventSet));
++	sz += MAXALIGN(sizeof(WaitEvent) * nevents);
++
++	sz += MAXALIGN(sizeof(struct pollfd) * nevents);
++
++	data = (char *) MemoryContextAllocZero(context, sz);
++
++	set = (WaitEventSet *) data;
++	data += MAXALIGN(sizeof(WaitEventSet));
++
++	set->events = (WaitEvent *) data;
++	data += MAXALIGN(sizeof(WaitEvent) * nevents);
++
++	set->rpollfds = (struct pollfd *) data;
++	data += MAXALIGN(sizeof(struct pollfd) * nevents);
++
++	set->latch = NULL;
++	set->nevents_space = nevents;
++
++	return set;
++}
++#endif
++
+ /*
+  * Free a previously created WaitEventSet.
+  *
+@@ -607,7 +670,9 @@ void
+ FreeWaitEventSet(WaitEventSet *set)
+ {
+ #if defined(WAIT_USE_EPOLL)
+-	close(set->epoll_fd);
++	/* If socket wasn't rsocket */
++	if (set->epoll_fd)
++		close(set->epoll_fd);
+ #elif defined(WAIT_USE_WIN32)
+ 	WaitEvent  *cur_event;
+ 
+@@ -667,6 +732,7 @@ AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd, Latch *latch,
+ 				  void *user_data)
+ {
+ 	WaitEvent  *event;
++	int			free_event;
+ 
+ 	/* not enough space */
+ 	Assert(set->nevents < set->nevents_space);
+@@ -690,8 +756,19 @@ AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd, Latch *latch,
+ 	if (fd == PGINVALID_SOCKET && (events & WL_SOCKET_MASK))
+ 		elog(ERROR, "cannot wait on socket event without a socket");
+ 
+-	event = &set->events[set->nevents];
+-	event->pos = set->nevents++;
++	free_event = set->free_events;
++	if (free_event >= 0)
++	{
++		event = &set->events[free_event];
++		set->free_events = event->pos;
++		event->pos = free_event;
++	}
++	else
++	{
++		event = &set->events[set->nevents];
++		event->pos = set->nevents;
++	}
++	set->nevents += 1;
+ 	event->fd = fd;
+ 	event->events = events;
+ 	event->user_data = user_data;
+@@ -714,18 +791,47 @@ AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd, Latch *latch,
+ #endif
+ 	}
+ 
++#if defined (WITH_RSOCKET)
++	/* If socket is rsocket */
++	if (set->rpollfds)
++	{
++		WaitEventAdjustRpoll(set, event);
++		return event->pos;
++	}
++#endif
++
+ 	/* perform wait primitive specific initialization, if needed */
+ #if defined(WAIT_USE_EPOLL)
+ 	WaitEventAdjustEpoll(set, event, EPOLL_CTL_ADD);
+ #elif defined(WAIT_USE_POLL)
+-	WaitEventAdjustPoll(set, event);
++	WaitEventAdjustPoll(set, event, false);
+ #elif defined(WAIT_USE_WIN32)
+-	WaitEventAdjustWin32(set, event);
++	WaitEventAdjustWin32(set, event, false);
+ #endif
+ 
+ 	return event->pos;
+ }
+ 
++/*
++ * Remove event with specified socket descriptor
++ */
++void
++DeleteWaitEvent(WaitEventSet *set, int pos)
++{
++	WaitEvent  *event;
++
++	Assert(pos < set->nevents_space);
++	event = &set->events[pos];
++
++#if defined(WAIT_USE_EPOLL)
++	WaitEventAdjustEpoll(set, event, EPOLL_CTL_DEL);
++#elif defined(WAIT_USE_POLL)
++	WaitEventAdjustPoll(set, event, true);
++#elif defined(WAIT_USE_WIN32)
++	WaitEventAdjustWin32(set, event, true);
++#endif
++}
++
+ /*
+  * Change the event mask and, in the WL_LATCH_SET case, the latch associated
+  * with the WaitEvent.
+@@ -737,7 +843,7 @@ ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch)
+ {
+ 	WaitEvent  *event;
+ 
+-	Assert(pos < set->nevents);
++	Assert(pos < set->nevents_space);
+ 
+ 	event = &set->events[pos];
+ 
+@@ -771,12 +877,21 @@ ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch)
+ 		set->latch = latch;
+ 	}
+ 
++#if defined (WITH_RSOCKET)
++	/* If socket is rsocket */
++	if (set->rpollfds)
++	{
++		WaitEventAdjustRpoll(set, event);
++		return;
++	}
++#endif
++
+ #if defined(WAIT_USE_EPOLL)
+ 	WaitEventAdjustEpoll(set, event, EPOLL_CTL_MOD);
+ #elif defined(WAIT_USE_POLL)
+-	WaitEventAdjustPoll(set, event);
++	WaitEventAdjustPoll(set, event, false);
+ #elif defined(WAIT_USE_WIN32)
+-	WaitEventAdjustWin32(set, event);
++	WaitEventAdjustWin32(set, event, false);
+ #endif
+ }
+ 
+@@ -823,18 +938,42 @@ WaitEventAdjustEpoll(WaitEventSet *set, WaitEvent *event, int action)
+ 	 */
+ 	rc = epoll_ctl(set->epoll_fd, action, event->fd, &epoll_ev);
+ 
+-	if (rc < 0)
++	/*
++	 * Skip throwing error in case of EPOLL_CTL_DEL. Upon connection error
++	 * libpq may or may not close the socket, so epfd can disappear.
++	 */
++	if (rc < 0 &&
++			!(action == EPOLL_CTL_DEL && (errno == EBADF || errno == EINVAL)))
+ 		ereport(ERROR,
+ 				(errcode_for_socket_access(),
+ 				 errmsg("epoll_ctl() failed: %m")));
++
++	if (action == EPOLL_CTL_DEL)
++	{
++		int pos = event->pos;
++		event->fd = PGINVALID_SOCKET;
++		set->nevents -= 1;
++		event->pos = set->free_events;
++		set->free_events = pos;
++	}
+ }
+ #endif
+ 
+ #if defined(WAIT_USE_POLL)
+ static void
+-WaitEventAdjustPoll(WaitEventSet *set, WaitEvent *event)
++WaitEventAdjustPoll(WaitEventSet *set, WaitEvent *event, bool remove)
+ {
+-	struct pollfd *pollfd = &set->pollfds[event->pos];
++	int pos = event->pos;
++	struct pollfd *pollfd = &set->pollfds[pos];
++
++	if (remove)
++	{
++		set->nevents -= 1;
++		*pollfd = set->pollfds[set->nevents];
++		set->events[pos] = set->events[set->nevents];
++		event->pos = pos;
++		return;
++	}
+ 
+ 	pollfd->revents = 0;
+ 	pollfd->fd = event->fd;
+@@ -865,9 +1004,25 @@ WaitEventAdjustPoll(WaitEventSet *set, WaitEvent *event)
+ 
+ #if defined(WAIT_USE_WIN32)
+ static void
+-WaitEventAdjustWin32(WaitEventSet *set, WaitEvent *event)
++WaitEventAdjustWin32(WaitEventSet *set, WaitEvent *event, bool remove)
+ {
+-	HANDLE	   *handle = &set->handles[event->pos + 1];
++	int pos = event->pos;
++	HANDLE	   *handle = &set->handles[pos + 1];
++
++	if (remove)
++	{
++		Assert(event->fd != PGINVALID_SOCKET);
++
++		if (*handle != WSA_INVALID_EVENT)
++			WSACloseEvent(*handle);
++
++		set->nevents -= 1;
++		set->events[pos] = set->events[set->nevents];
++		*handle = set->handles[set->nevents + 1];
++		set->handles[set->nevents + 1] = WSA_INVALID_EVENT;
++		event->pos = pos;
++		return;
++	}
+ 
+ 	if (event->events == WL_LATCH_SET)
+ 	{
+@@ -905,6 +1060,39 @@ WaitEventAdjustWin32(WaitEventSet *set, WaitEvent *event)
+ }
+ #endif
+ 
++#if defined (WITH_RSOCKET)
++static void
++WaitEventAdjustRpoll(WaitEventSet *set, WaitEvent *event)
++{
++	struct pollfd *pollfd = &set->rpollfds[event->pos];
++
++	pollfd->revents = 0;
++	pollfd->fd = event->fd;
++
++	/* prepare pollfd entry once */
++	if (event->events == WL_LATCH_SET)
++	{
++		Assert(set->latch != NULL);
++		pollfd->events = POLLIN;
++	}
++	else if (event->events == WL_POSTMASTER_DEATH)
++	{
++		pollfd->events = POLLIN;
++	}
++	else
++	{
++		Assert(event->events & (WL_SOCKET_READABLE | WL_SOCKET_WRITEABLE));
++		pollfd->events = 0;
++		if (event->events & WL_SOCKET_READABLE)
++			pollfd->events |= POLLIN;
++		if (event->events & WL_SOCKET_WRITEABLE)
++			pollfd->events |= POLLOUT;
++	}
++
++	Assert(event->fd != PGINVALID_SOCKET);
++}
++#endif
++
+ /*
+  * Wait for events added to the set to happen, or until the timeout is
+  * reached.  At most nevents occurred events are returned.
+@@ -997,8 +1185,14 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
+ 		 * this file. If -1 is returned, a timeout has occurred, if 0 we have
+ 		 * to retry, everything >= 1 is the number of returned events.
+ 		 */
+-		rc = WaitEventSetWaitBlock(set, cur_timeout,
+-								   occurred_events, nevents);
++#if defined (WITH_RSOCKET)
++		if (set->rpollfds)
++			rc = WaitEventSetWaitBlockForRsocket(set, cur_timeout,
++												 occurred_events, nevents);
++		else
++#endif
++			rc = WaitEventSetWaitBlock(set, cur_timeout,
++									   occurred_events, nevents);
+ 
+ 		if (rc == -1)
+ 			break;				/* timeout occurred */
+@@ -1296,7 +1490,7 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
+ 	{
+ 		if (cur_event->reset)
+ 		{
+-			WaitEventAdjustWin32(set, cur_event);
++			WaitEventAdjustWin32(set, cur_event, false);
+ 			cur_event->reset = false;
+ 		}
+ 
+@@ -1458,6 +1652,124 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
+ }
+ #endif
+ 
++#if defined (WITH_RSOCKET)
++
++/*
++ * Wait using rpoll().
++ *
++ * This allows to receive readiness notifications for several events at once,
++ * but requires iterating through all of set->rpollfds.
++ */
++static inline int
++WaitEventSetWaitBlockForRsocket(WaitEventSet *set, int cur_timeout,
++								WaitEvent *occurred_events, int nevents)
++{
++	int			returned_events = 0;
++	int			rc;
++	WaitEvent  *cur_event;
++	struct pollfd *cur_pollfd;
++
++	/* Sleep */
++	rc = pg_poll(set->rpollfds, set->nevents, (int) cur_timeout, true);
++
++	/* Check return code */
++	if (rc < 0)
++	{
++		/* EINTR is okay, otherwise complain */
++		if (errno != EINTR)
++		{
++			waiting = false;
++			ereport(ERROR,
++					(errcode_for_socket_access(),
++					 errmsg("poll() failed: %m")));
++		}
++		return 0;
++	}
++	else if (rc == 0)
++	{
++		/* timeout exceeded */
++		return -1;
++	}
++
++	for (cur_event = set->events, cur_pollfd = set->rpollfds;
++		 cur_event < (set->events + set->nevents) &&
++		 returned_events < nevents;
++		 cur_event++, cur_pollfd++)
++	{
++		/* no activity on this FD, skip */
++		if (cur_pollfd->revents == 0)
++			continue;
++
++		occurred_events->pos = cur_event->pos;
++		occurred_events->user_data = cur_event->user_data;
++		occurred_events->events = 0;
++
++		if (cur_event->events == WL_LATCH_SET &&
++			(cur_pollfd->revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)))
++		{
++			/* There's data in the self-pipe, clear it. */
++			drainSelfPipe();
++
++			if (set->latch->is_set)
++			{
++				occurred_events->fd = PGINVALID_SOCKET;
++				occurred_events->events = WL_LATCH_SET;
++				occurred_events++;
++				returned_events++;
++			}
++		}
++		else if (cur_event->events == WL_POSTMASTER_DEATH &&
++			 (cur_pollfd->revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)))
++		{
++			/*
++			 * We expect an POLLHUP when the remote end is closed, but because
++			 * we don't expect the pipe to become readable or to have any
++			 * errors either, treat those cases as postmaster death, too.
++			 *
++			 * As explained in the WAIT_USE_SELECT implementation, select(2)
++			 * may spuriously return. Be paranoid about that here too, a
++			 * spurious WL_POSTMASTER_DEATH would be painful.
++			 */
++			if (!PostmasterIsAlive())
++			{
++				occurred_events->fd = PGINVALID_SOCKET;
++				occurred_events->events = WL_POSTMASTER_DEATH;
++				occurred_events++;
++				returned_events++;
++			}
++		}
++		else if (cur_event->events & (WL_SOCKET_READABLE | WL_SOCKET_WRITEABLE))
++		{
++			int			errflags = POLLHUP | POLLERR | POLLNVAL;
++
++			Assert(cur_event->fd >= PGINVALID_SOCKET);
++
++			if ((cur_event->events & WL_SOCKET_READABLE) &&
++				(cur_pollfd->revents & (POLLIN | errflags)))
++			{
++				/* data available in socket, or EOF */
++				occurred_events->events |= WL_SOCKET_READABLE;
++			}
++
++			if ((cur_event->events & WL_SOCKET_WRITEABLE) &&
++				(cur_pollfd->revents & (POLLOUT | errflags)))
++			{
++				/* writeable, or EOF */
++				occurred_events->events |= WL_SOCKET_WRITEABLE;
++			}
++
++			if (occurred_events->events != 0)
++			{
++				occurred_events->fd = cur_event->fd;
++				occurred_events++;
++				returned_events++;
++			}
++		}
++	}
++	return returned_events;
++}
++#endif
++
+ /*
+  * SetLatch uses SIGUSR1 to wake up the process waiting on the latch.
+  *
+diff --git a/src/backend/tcop/dest.c b/src/backend/tcop/dest.c
+index c95a4d519d..ad17843d92 100644
+--- a/src/backend/tcop/dest.c
++++ b/src/backend/tcop/dest.c
+@@ -77,6 +77,11 @@ static DestReceiver debugtupDR = {
+ 	DestDebug
+ };
+ 
++static DestReceiver logtupDR = {
++	logtup, logStartup, donothingCleanup, donothingCleanup,
++	DestLog
++};
++
+ static DestReceiver printsimpleDR = {
+ 	printsimple, printsimple_startup, donothingCleanup, donothingCleanup,
+ 	DestRemoteSimple
+@@ -123,6 +128,9 @@ CreateDestReceiver(CommandDest dest)
+ 		case DestDebug:
+ 			return &debugtupDR;
+ 
++		case DestLog:
++			return &logtupDR;
++
+ 		case DestSPI:
+ 			return &spi_printtupDR;
+ 
+@@ -171,6 +179,7 @@ EndCommand(const char *commandTag, CommandDest dest)
+ 
+ 		case DestNone:
+ 		case DestDebug:
++		case DestLog:
+ 		case DestSPI:
+ 		case DestTuplestore:
+ 		case DestIntoRel:
+@@ -215,6 +224,7 @@ NullCommand(CommandDest dest)
+ 
+ 		case DestNone:
+ 		case DestDebug:
++		case DestLog:
+ 		case DestSPI:
+ 		case DestTuplestore:
+ 		case DestIntoRel:
+@@ -261,6 +271,7 @@ ReadyForQuery(CommandDest dest)
+ 
+ 		case DestNone:
+ 		case DestDebug:
++		case DestLog:
+ 		case DestSPI:
+ 		case DestTuplestore:
+ 		case DestIntoRel:
+diff --git a/src/backend/utils/cache/lsyscache.c b/src/backend/utils/cache/lsyscache.c
+index 82d39e9498..0611b76a82 100644
+--- a/src/backend/utils/cache/lsyscache.c
++++ b/src/backend/utils/cache/lsyscache.c
+@@ -18,6 +18,7 @@
+ #include "access/hash.h"
+ #include "access/htup_details.h"
+ #include "access/nbtree.h"
++#include "access/sysattr.h"
+ #include "bootstrap/bootstrap.h"
+ #include "catalog/namespace.h"
+ #include "catalog/pg_am.h"
+@@ -31,6 +32,7 @@
+ #include "catalog/pg_operator.h"
+ #include "catalog/pg_proc.h"
+ #include "catalog/pg_range.h"
++#include "catalog/pg_rewrite.h"
+ #include "catalog/pg_statistic.h"
+ #include "catalog/pg_transform.h"
+ #include "catalog/pg_type.h"
+@@ -3130,3 +3132,224 @@ get_range_subtype(Oid rangeOid)
+ 	else
+ 		return InvalidOid;
+ }
++
++/*
++ * get_typ_name
++ *
++ *		Given the type OID, find the type name
++ *		It returns palloc'd copy of the name or NULL if the cache lookup fails...
++ */
++char *
++get_typ_name(Oid typid)
++{
++	HeapTuple	tp;
++
++	tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
++	if (HeapTupleIsValid(tp))
++	{
++		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tp);
++		char	   *result;
++
++		result = pstrdup(NameStr(typtup->typname));
++		ReleaseSysCache(tp);
++		return result;
++	}
++	else
++		return NULL;
++}
++
++/*
++ * get_typ_namespace
++ *
++ *		Given the type OID, find the namespace
++ *		It returns InvalidOid if the cache lookup fails...
++ */
++Oid
++get_typ_namespace(Oid typid)
++{
++	HeapTuple	tp;
++
++	tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
++	if (HeapTupleIsValid(tp))
++	{
++		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tp);
++		Oid			result;
++
++		result = typtup->typnamespace;
++		ReleaseSysCache(tp);
++		return result;
++	}
++	else
++		return InvalidOid;
++}
++
++/*
++ * get_typname_typid
++ *	  Given a type name and namespace OID, look up the type OID.
++ *
++ * Returns InvalidOid if there is no such type
++ */
++Oid
++get_typname_typid(const char *typname, Oid typnamespace)
++{
++	return GetSysCacheOid2(TYPENAMENSP,
++						   CStringGetDatum(typname),
++						   ObjectIdGetDatum(typnamespace));
++}
++
++/*
++ * get_funcid
++ *	  Given a function name, argument types and namespace OID, look up
++ * the function OID.
++ *
++ * Returns InvalidOid if there is no such function
++ */
++Oid
++get_funcid(const char *funcname, oidvector *argtypes, Oid funcnsp)
++{
++	return GetSysCacheOid3(PROCNAMEARGSNSP,
++						   CStringGetDatum(funcname),
++						   PointerGetDatum(argtypes),
++						   ObjectIdGetDatum(funcnsp));
++}
++
++/*
++ * get_collation_namespace
++ *		Returns the namespace id of a given pg_collation entry.
++ *
++ * Returns an Oid of the collation's namespace.
++ */
++Oid
++get_collation_namespace(Oid colloid)
++{
++	HeapTuple	tp;
++
++	tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(colloid));
++	if (HeapTupleIsValid(tp))
++	{
++		Form_pg_collation colltup = (Form_pg_collation) GETSTRUCT(tp);
++		Oid			result;
++
++		result = colltup->collnamespace;
++		ReleaseSysCache(tp);
++		return result;
++	}
++	else
++		return InvalidOid;
++}
++
++/*
++ * get_collation_encoding
++ *		Returns the encoding of a given pg_collation entry.
++ *
++ * Returns the collation's encoding, or -1 if entry does not exist.
++ */
++int32
++get_collation_encoding(Oid colloid)
++{
++	HeapTuple	tp;
++
++	tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(colloid));
++	if (HeapTupleIsValid(tp))
++	{
++		Form_pg_collation colltup = (Form_pg_collation) GETSTRUCT(tp);
++		int32		result;
++
++		result = colltup->collencoding;
++		ReleaseSysCache(tp);
++		return result;
++	}
++	else
++		return -1;
++}
++
++/*
++ * get_collid
++ *	  Given a collation name, encoding and namespace OID, look up
++ * the collation OID.
++ *
++ * Returns InvalidOid if there is no such collation
++ */
++Oid
++get_collid(const char *collname, int32 collencoding, Oid collnsp)
++{
++	return GetSysCacheOid3(COLLNAMEENCNSP,
++						   CStringGetDatum(collname),
++						   Int32GetDatum(collencoding),
++						   ObjectIdGetDatum(collnsp));
++}
++
++/*
++ * get_opnamespace
++ *	  Given an opno, find the namespace
++ *
++ * Returns InvalidOid if there is no such operator
++ */
++Oid
++get_opnamespace(Oid opno)
++{
++	HeapTuple	tp;
++
++	tp = SearchSysCache1(OPEROID, ObjectIdGetDatum(opno));
++	if (HeapTupleIsValid(tp))
++	{
++		Form_pg_operator optup = (Form_pg_operator) GETSTRUCT(tp);
++		Oid			result;
++
++		result = optup->oprnamespace;
++		ReleaseSysCache(tp);
++		return result;
++	}
++	else
++		return InvalidOid;
++}
++
++/*
++ * get_operid
++ *	  Given an operator name, argument types and namespace OID, look up
++ * the operator OID.
++ *
++ * Returns InvalidOid if there is no such operator
++ */
++Oid
++get_operid(const char *oprname, Oid oprleft, Oid oprright, Oid oprnsp)
++{
++	return GetSysCacheOid4(OPERNAMENSP,
++						   CStringGetDatum(oprname),
++						   ObjectIdGetDatum(oprleft),
++						   ObjectIdGetDatum(oprright),
++						   ObjectIdGetDatum(oprnsp));
++}
++
++/*
++ * Returns rule name or NULL, if it is not exists
++ */
++char *
++get_rule_name(Oid ruleoid, Oid *ev_class)
++{
++	Relation	pg_rewrite;
++	ScanKeyData entry[1];
++	SysScanDesc scan;
++	HeapTuple	tuple;
++	char	   *name = NULL;
++
++	Assert(ev_class != NULL);
++
++	pg_rewrite = heap_open(RewriteRelationId, AccessShareLock);
++	ScanKeyInit(&entry[0],
++				ObjectIdAttributeNumber,
++				BTEqualStrategyNumber, F_OIDEQ,
++				ObjectIdGetDatum(ruleoid));
++	scan = systable_beginscan(pg_rewrite, 0, false, NULL, 1, entry);
++	tuple = systable_getnext(scan);
++
++	if (HeapTupleIsValid(tuple))
++	{
++		name = pstrdup(NameStr(((Form_pg_rewrite) GETSTRUCT(tuple))->rulename));
++		*ev_class = ((Form_pg_rewrite) GETSTRUCT(tuple))->ev_class;
++	}
++
++	systable_endscan(scan);
++	heap_close(pg_rewrite, AccessShareLock);
++	return name;
++}
+diff --git a/src/backend/utils/cache/plancache.c b/src/backend/utils/cache/plancache.c
+index 0ad3e3c736..a3638dad95 100644
+--- a/src/backend/utils/cache/plancache.c
++++ b/src/backend/utils/cache/plancache.c
+@@ -1906,3 +1906,71 @@ ResetPlanCache(void)
+ 		}
+ 	}
+ }
++
++void
++SetRemoteSubplan(CachedPlanSource *plansource, PlannedStmt *rstmt)
++{
++	CachedPlan 		   *plan;
++	MemoryContext 		plan_context;
++	MemoryContext 		oldcxt;
++	PlannedStmt 	   *stmt;
++
++	Assert(plansource->raw_parse_tree == NULL);
++	Assert(plansource->query_list == NIL);
++
++	/*
++	 * Make dedicated query context to store cached plan. It is in current
++	 * memory context for now, later it will be reparented to
++	 * CachedMemoryContext. If it is in CachedMemoryContext initially we would
++	 * have to destroy it in case of error.
++	 */
++	plan_context = AllocSetContextCreate(CurrentMemoryContext,
++										 "CachedPlan",
++										 ALLOCSET_DEFAULT_SIZES);
++	oldcxt = MemoryContextSwitchTo(plan_context);
++
++	stmt = makeNode(PlannedStmt);
++
++	stmt->commandType = rstmt->commandType;
++	stmt->hasReturning = rstmt->hasReturning;
++	stmt->resultRelations = rstmt->resultRelations;
++	stmt->subplans = rstmt->subplans;
++	stmt->rowMarks = rstmt->rowMarks;
++	stmt->planTree = rstmt->planTree;
++	stmt->rtable = rstmt->rtable;
++
++	stmt->canSetTag = true;
++	stmt->transientPlan = false;
++	stmt->utilityStmt = NULL;
++	stmt->rewindPlanIDs = NULL;
++	stmt->relationOids = rstmt->relationOids;
++	stmt->invalItems = rstmt->invalItems;
++
++	/*
++	 * Create and fill the CachedPlan struct within the new context.
++	 */
++	plan = (CachedPlan *) palloc(sizeof(CachedPlan));
++	plan->magic = CACHEDPLAN_MAGIC;
++	plan->stmt_list = list_make1(stmt);
++	plan->saved_xmin = InvalidTransactionId;
++	plan->refcount = 1; /* will be referenced by plansource */
++	plan->context = plan_context;
++	plan->dependsOnRole = false;
++	if (plansource->is_saved)
++	{
++		MemoryContextSetParent(plan_context, CacheMemoryContext);
++		plan->is_saved = true;
++	}
++	else
++	{
++		MemoryContextSetParent(plan_context,
++							   MemoryContextGetParent(plansource->context));
++		plan->is_saved = false;
++	}
++	plan->is_valid = true;
++	plan->is_oneshot = false;
++
++	plansource->gplan = plan;
++
++	MemoryContextSwitchTo(oldcxt);
++}
+diff --git a/src/backend/utils/cache/typcache.c b/src/backend/utils/cache/typcache.c
+index 21087d6af7..147981d720 100644
+--- a/src/backend/utils/cache/typcache.c
++++ b/src/backend/utils/cache/typcache.c
+@@ -1621,6 +1621,7 @@ lookup_rowtype_tupdesc_internal(Oid type_id, int32 typmod, bool noError)
+ 			ereport(ERROR,
+ 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+ 					 errmsg("record type has not been registered")));
++
+ 		return NULL;
+ 	}
+ }
+diff --git a/src/include/access/printtup.h b/src/include/access/printtup.h
+index 94f8d705b5..7db24bffc6 100644
+--- a/src/include/access/printtup.h
++++ b/src/include/access/printtup.h
+@@ -27,6 +27,9 @@ extern void debugStartup(DestReceiver *self, int operation,
+ 			 TupleDesc typeinfo);
+ extern bool debugtup(TupleTableSlot *slot, DestReceiver *self);
+ 
++extern void logStartup(DestReceiver *self, int operation, TupleDesc typeinfo);
++extern bool logtup(TupleTableSlot *slot, DestReceiver *self);
++
+ /* XXX these are really in executor/spi.c */
+ extern void spi_dest_startup(DestReceiver *self, int operation,
+ 				 TupleDesc typeinfo);
+diff --git a/src/include/commands/defrem.h b/src/include/commands/defrem.h
+index 1d05a4bcdc..a2edb4b0d0 100644
+--- a/src/include/commands/defrem.h
++++ b/src/include/commands/defrem.h
+@@ -171,4 +171,6 @@ extern TypeName *defGetTypeName(DefElem *def);
+ extern int	defGetTypeLength(DefElem *def);
+ extern List *defGetStringList(DefElem *def);
+ 
++extern Oid get_family_oid(const char *opfname, const char *nspname, const char *ammth);
++extern char * get_opfamily_name(Oid opfamilyOid, char **nspname, char **opfmethod);
+ #endif							/* DEFREM_H */
+diff --git a/src/include/commands/user.h b/src/include/commands/user.h
+index 028e0dde56..12183e4e38 100644
+--- a/src/include/commands/user.h
++++ b/src/include/commands/user.h
+@@ -34,4 +34,7 @@ extern void DropOwnedObjects(DropOwnedStmt *stmt);
+ extern void ReassignOwnedObjects(ReassignOwnedStmt *stmt);
+ extern List *roleSpecsToIds(List *memberNames);
+ 
++extern char *get_rolename(Oid roleid);
++extern Oid get_roleid(const char *rolename);
++
+ #endif							/* USER_H */
+diff --git a/src/include/nodes/nodes.h b/src/include/nodes/nodes.h
+index 697d3d7a5f..cc571dd46b 100644
+--- a/src/include/nodes/nodes.h
++++ b/src/include/nodes/nodes.h
+@@ -607,6 +607,9 @@ extern void outDatum(struct StringInfoData *str, uintptr_t value,
+ extern char *nodeToString(const void *obj);
+ extern char *bmsToString(const struct Bitmapset *bms);
+ 
++extern bool set_portable_input(bool value);
++extern void set_portable_output(bool value);
++
+ /*
+  * nodes/{readfuncs.c,read.c}
+  */
+@@ -617,6 +620,7 @@ extern bool *readBoolCols(int numCols);
+ extern int *readIntCols(int numCols);
+ extern Oid *readOidCols(int numCols);
+ extern int16 *readAttrNumberCols(int numCols);
++extern Oid read_oid_field(char **token, int *length);
+ 
+ /*
+  * nodes/copyfuncs.c
+diff --git a/src/include/storage/latch.h b/src/include/storage/latch.h
+index fd8735b7f5..782f400fc9 100644
+--- a/src/include/storage/latch.h
++++ b/src/include/storage/latch.h
+@@ -166,6 +166,7 @@ extern WaitEventSet *CreateWaitEventSet(MemoryContext context, int nevents);
+ extern void FreeWaitEventSet(WaitEventSet *set);
+ extern int AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd,
+ 				  Latch *latch, void *user_data);
++extern void DeleteWaitEvent(WaitEventSet *set, int pos);
+ extern void ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch);
+ 
+ extern int WaitEventSetWait(WaitEventSet *set, long timeout,
+diff --git a/src/include/tcop/dest.h b/src/include/tcop/dest.h
+index 82f0f2e741..304847cd8d 100644
+--- a/src/include/tcop/dest.h
++++ b/src/include/tcop/dest.h
+@@ -87,6 +87,7 @@ typedef enum
+ {
+ 	DestNone,					/* results are discarded */
+ 	DestDebug,					/* results go to debugging output */
++	DestLog,					/* added permanently for pg_execplan test purposes */
+ 	DestRemote,					/* results sent to frontend process */
+ 	DestRemoteExecute,			/* sent to frontend, in Execute command */
+ 	DestRemoteSimple,			/* sent to frontend, w/no catalog access */
+diff --git a/src/include/utils/lsyscache.h b/src/include/utils/lsyscache.h
+index e868d84cef..d1bfabe891 100644
+--- a/src/include/utils/lsyscache.h
++++ b/src/include/utils/lsyscache.h
+@@ -17,6 +17,8 @@
+ #include "access/htup.h"
+ #include "nodes/pg_list.h"
+ 
++#define RULEOID	(USERMAPPINGUSERSERVER + 1) /* Fake cache id for rule oid*/
++
+ /* Result list element for get_op_btree_interpretation */
+ typedef struct OpBtreeInterpretation
+ {
+@@ -177,6 +179,18 @@ extern void free_attstatsslot(AttStatsSlot *sslot);
+ extern char *get_namespace_name(Oid nspid);
+ extern char *get_namespace_name_or_temp(Oid nspid);
+ extern Oid	get_range_subtype(Oid rangeOid);
++extern char *get_typ_name(Oid typid);
++
++extern Oid get_typ_namespace(Oid typid);
++extern Oid get_typname_typid(const char *typname, Oid typnamespace);
++extern Oid get_funcid(const char *funcname, oidvector *argtypes, Oid funcnsp);
++extern Oid get_collation_namespace(Oid colloid);
++extern int32 get_collation_encoding(Oid colloid);
++extern Oid get_collid(const char *collname, int32 collencoding, Oid collnsp);
++extern Oid get_opnamespace(Oid opno);
++extern Oid get_operid(const char *oprname, Oid oprleft, Oid oprright, Oid oprnsp);
++extern char *get_rule_name(Oid ruleoid, Oid *ev_class);
++
+ 
+ #define type_is_array(typid)  (get_element_type(typid) != InvalidOid)
+ /* type_is_array_domain accepts both plain arrays and domains over arrays */
+diff --git a/src/include/utils/plancache.h b/src/include/utils/plancache.h
+index ab20aa04b0..d2c85648a1 100644
+--- a/src/include/utils/plancache.h
++++ b/src/include/utils/plancache.h
+@@ -17,6 +17,7 @@
+ 
+ #include "access/tupdesc.h"
+ #include "nodes/params.h"
++#include "nodes/plannodes.h"
+ #include "utils/queryenvironment.h"
+ 
+ /* Forward declaration, to avoid including parsenodes.h here */
+@@ -181,5 +182,5 @@ extern CachedPlan *GetCachedPlan(CachedPlanSource *plansource,
+ 			  bool useResOwner,
+ 			  QueryEnvironment *queryEnv);
+ extern void ReleaseCachedPlan(CachedPlan *plan, bool useResOwner);
+-
++extern void SetRemoteSubplan(CachedPlanSource *plansource, PlannedStmt *rstmt);
+ #endif							/* PLANCACHE_H */

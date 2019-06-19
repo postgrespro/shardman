@@ -1,4 +1,4 @@
-comment = 'A bunch of stuff forming sharding'
+comment = 'Shardman extension'
 # CREATE EXTENSION will run extname--version.sql file
 default_version = '0.0.1'
 relocatable = false

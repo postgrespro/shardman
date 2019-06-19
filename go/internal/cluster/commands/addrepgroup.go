@@ -201,11 +201,11 @@ func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore
 		rgumopts, _ := pg.FormUserMappingOpts(rgconnstrmap)
 		rgfsopts, _ := pg.FormForeignServerOpts(rgconnstrmap)
 		bcst.Push(newrgid, fmt.Sprintf("drop server if exists %s cascade", pg.FSI(rgid)))
-		bcst.Push(newrgid, fmt.Sprintf("create server %s foreign data wrapper shardman_postgres_fdw %s", pg.FSI(rgid), rgfsopts))
+		bcst.Push(newrgid, fmt.Sprintf("create server %s foreign data wrapper postgres_fdw %s", pg.FSI(rgid), rgfsopts))
 		bcst.Push(newrgid, fmt.Sprintf("update shardman.repgroups set srvid = (select oid from pg_foreign_server where srvname = %s) where id = %d",
 			pg.FSL(rgid), rgid))
 		bcst.Push(rgid, fmt.Sprintf("drop server if exists %s cascade", pg.FSI(newrgid)))
-		bcst.Push(rgid, fmt.Sprintf("create server %s foreign data wrapper shardman_postgres_fdw %s", pg.FSI(newrgid), newrgfsopts))
+		bcst.Push(rgid, fmt.Sprintf("create server %s foreign data wrapper postgres_fdw %s", pg.FSI(newrgid), newrgfsopts))
 		bcst.Push(rgid, fmt.Sprintf("insert into shardman.repgroups values (%d, (select oid from pg_foreign_server where srvname = %s))",
 			newrgid, pg.FSL(newrgid)))
 		// create sudo user mappings
