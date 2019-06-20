@@ -631,7 +631,7 @@ dmq_sender_main(Datum main_arg)
 					else if (status == PGRES_POLLING_OK)
 					{
 						char *sender_name = conns[conn_id].sender_name;
-						char *query = psprintf("select dmq_receiver_loop('%s')",
+						char *query = psprintf("select shardman.dmq_receiver_loop('%s')",
 											   sender_name);
 
 						conns[conn_id].state = Negotiating;

@@ -145,7 +145,7 @@ serialize_plan(Plan *plan, const char *sourceText, ParamListInfo params)
 	host = GetMyServerName(&port);
 	serverName = serializeServer(host, port);
 	query = palloc0(qlen + plen + rlen + strlen(serverName) + 100);
-	sprintf(query, "SELECT public.pg_exec_plan('%s', '%s', '%s', '%s');",
+	sprintf(query, "SELECT shardman.pg_exec_plan('%s', '%s', '%s', '%s');",
 						query_container, plan_container, params_container,
 						serverName);
 

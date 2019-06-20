@@ -43,7 +43,7 @@ exec_plan(char *squery, PlannedStmt *pstmt, ParamListInfo paramLI,
 	SetRemoteSubplan(psrc, pstmt);
 	cplan = GetCachedPlan(psrc, paramLI, false, NULL);
 
-	receiver = CreateDestReceiver(DestLog);
+	receiver = CreateDestReceiver(DestNone);
 
 	PG_TRY();
 	{

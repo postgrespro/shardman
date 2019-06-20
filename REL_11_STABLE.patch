@@ -14,59 +14,6 @@ index fe4893a8e0..2ba7530459 100644
  
  	/*
  	 * Set remote timezone; this is basically just cosmetic, since all
-diff --git a/src/backend/access/common/printtup.c b/src/backend/access/common/printtup.c
-index f42d1c7e78..ebb07017dd 100644
---- a/src/backend/access/common/printtup.c
-+++ b/src/backend/access/common/printtup.c
-@@ -639,6 +639,48 @@ debugtup(TupleTableSlot *slot, DestReceiver *self)
- 	return true;
- }
- 
-+void
-+logStartup(DestReceiver *self, int operation, TupleDesc typeinfo)
-+{
-+	int			natts = typeinfo->natts;
-+	int			i;
-+
-+	/*
-+	 * show the return type of the tuples
-+	 */
-+	printf("\t---- Result Attributes ----\n");
-+	for (i = 0; i < natts; ++i)
-+		printf("%s\t|\t", NameStr(TupleDescAttr(typeinfo, i)->attname));
-+	printf("\n");
-+}
-+
-+bool
-+logtup(TupleTableSlot *slot, DestReceiver *self)
-+{
-+	TupleDesc	typeinfo = slot->tts_tupleDescriptor;
-+	int			natts = typeinfo->natts;
-+	int			i;
-+	Datum		attr;
-+	char	   *value;
-+	bool		isnull;
-+	Oid			typoutput;
-+	bool		typisvarlena;
-+
-+	for (i = 0; i < natts; ++i)
-+	{
-+		attr = slot_getattr(slot, i + 1, &isnull);
-+		if (isnull)
-+			continue;
-+		getTypeOutputInfo(TupleDescAttr(typeinfo, i)->atttypid,
-+						  &typoutput, &typisvarlena);
-+
-+		value = OidOutputFunctionCall(typoutput, attr);
-+		printf("%s\t|\t", value);
-+	}
-+	printf("\n");
-+
-+	return true;
-+}
- /* ----------------
-  *		printtup_internal_20 --- print a binary tuple in protocol 2.0
-  *
 diff --git a/src/backend/commands/opclasscmds.c b/src/backend/commands/opclasscmds.c
 index 6404188d02..06b819af5f 100644
 --- a/src/backend/commands/opclasscmds.c
@@ -178,19 +125,18 @@ index 71c5caa41b..54e013c474 100644
   * Rename role
   */
 diff --git a/src/backend/executor/nodeHashjoin.c b/src/backend/executor/nodeHashjoin.c
-index 5922e60eed..fa4241113c 100644
+index 5922e60eed..370c74f6ad 100644
 --- a/src/backend/executor/nodeHashjoin.c
 +++ b/src/backend/executor/nodeHashjoin.c
-@@ -147,7 +147,7 @@ static bool ExecHashJoinNewBatch(HashJoinState *hjstate);
- static bool ExecParallelHashJoinNewBatch(HashJoinState *hjstate);
+@@ -148,6 +148,7 @@ static bool ExecParallelHashJoinNewBatch(HashJoinState *hjstate);
  static void ExecParallelHashJoinPartitionOuter(HashJoinState *node);
  
--
+
 +static bool distributed = true;
  /* ----------------------------------------------------------------
   *		ExecHashJoinImpl
   *
-@@ -243,7 +243,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
+@@ -243,7 +244,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
  					/* no chance to not build the hash table */
  					node->hj_FirstOuterTupleSlot = NULL;
  				}
@@ -199,7 +145,7 @@ index 5922e60eed..fa4241113c 100644
  				{
  					/*
  					 * The empty-outer optimization is not implemented for
-@@ -294,7 +294,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
+@@ -294,7 +295,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
  				 * doing a left outer join, we can quit without scanning the
  				 * outer relation.
  				 */
@@ -531,7 +477,7 @@ index f5d786d79a..19f7c52232 100644
  	return str.data;
  }
 diff --git a/src/backend/nodes/read.c b/src/backend/nodes/read.c
-index a775f9120e..1caf7852ec 100644
+index a775f9120e..d58cf5d6b4 100644
 --- a/src/backend/nodes/read.c
 +++ b/src/backend/nodes/read.c
 @@ -31,6 +31,9 @@
@@ -552,7 +498,7 @@ index a775f9120e..1caf7852ec 100644
  
  	/*
  	 * We save and restore the pre-existing state of pg_strtok. This makes the
-@@ -51,10 +55,26 @@ stringToNode(char *str)
+@@ -51,10 +55,27 @@ stringToNode(char *str)
  
  	pg_strtok_ptr = str;		/* point pg_strtok at the string to read */
  
@@ -575,12 +521,12 @@ index a775f9120e..1caf7852ec 100644
  	retval = nodeRead(NULL, 0); /* do the reading */
  
  	pg_strtok_ptr = save_strtok;
--
+
 +	set_portable_input(temp);
  	return retval;
  }
  
-@@ -331,17 +351,13 @@ nodeRead(char *token, int tok_len)
+@@ -331,17 +352,13 @@ nodeRead(char *token, int tok_len)
  					for (;;)
  					{
  						Oid			val;
@@ -1653,56 +1599,6 @@ index e6706f7fb8..93dc2f0bda 100644
  /*
   * SetLatch uses SIGUSR1 to wake up the process waiting on the latch.
   *
-diff --git a/src/backend/tcop/dest.c b/src/backend/tcop/dest.c
-index c95a4d519d..ad17843d92 100644
---- a/src/backend/tcop/dest.c
-+++ b/src/backend/tcop/dest.c
-@@ -77,6 +77,11 @@ static DestReceiver debugtupDR = {
- 	DestDebug
- };
- 
-+static DestReceiver logtupDR = {
-+	logtup, logStartup, donothingCleanup, donothingCleanup,
-+	DestLog
-+};
-+
- static DestReceiver printsimpleDR = {
- 	printsimple, printsimple_startup, donothingCleanup, donothingCleanup,
- 	DestRemoteSimple
-@@ -123,6 +128,9 @@ CreateDestReceiver(CommandDest dest)
- 		case DestDebug:
- 			return &debugtupDR;
- 
-+		case DestLog:
-+			return &logtupDR;
-+
- 		case DestSPI:
- 			return &spi_printtupDR;
- 
-@@ -171,6 +179,7 @@ EndCommand(const char *commandTag, CommandDest dest)
- 
- 		case DestNone:
- 		case DestDebug:
-+		case DestLog:
- 		case DestSPI:
- 		case DestTuplestore:
- 		case DestIntoRel:
-@@ -215,6 +224,7 @@ NullCommand(CommandDest dest)
- 
- 		case DestNone:
- 		case DestDebug:
-+		case DestLog:
- 		case DestSPI:
- 		case DestTuplestore:
- 		case DestIntoRel:
-@@ -261,6 +271,7 @@ ReadyForQuery(CommandDest dest)
- 
- 		case DestNone:
- 		case DestDebug:
-+		case DestLog:
- 		case DestSPI:
- 		case DestTuplestore:
- 		case DestIntoRel:
 diff --git a/src/backend/utils/cache/lsyscache.c b/src/backend/utils/cache/lsyscache.c
 index 82d39e9498..0611b76a82 100644
 --- a/src/backend/utils/cache/lsyscache.c
@@ -2036,20 +1932,6 @@ index 21087d6af7..147981d720 100644
  		return NULL;
  	}
  }
-diff --git a/src/include/access/printtup.h b/src/include/access/printtup.h
-index 94f8d705b5..7db24bffc6 100644
---- a/src/include/access/printtup.h
-+++ b/src/include/access/printtup.h
-@@ -27,6 +27,9 @@ extern void debugStartup(DestReceiver *self, int operation,
- 			 TupleDesc typeinfo);
- extern bool debugtup(TupleTableSlot *slot, DestReceiver *self);
- 
-+extern void logStartup(DestReceiver *self, int operation, TupleDesc typeinfo);
-+extern bool logtup(TupleTableSlot *slot, DestReceiver *self);
-+
- /* XXX these are really in executor/spi.c */
- extern void spi_dest_startup(DestReceiver *self, int operation,
- 				 TupleDesc typeinfo);
 diff --git a/src/include/commands/defrem.h b/src/include/commands/defrem.h
 index 1d05a4bcdc..a2edb4b0d0 100644
 --- a/src/include/commands/defrem.h
@@ -2107,20 +1989,8 @@ index fd8735b7f5..782f400fc9 100644
  extern void ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch);
  
  extern int WaitEventSetWait(WaitEventSet *set, long timeout,
-diff --git a/src/include/tcop/dest.h b/src/include/tcop/dest.h
-index 82f0f2e741..304847cd8d 100644
---- a/src/include/tcop/dest.h
-+++ b/src/include/tcop/dest.h
-@@ -87,6 +87,7 @@ typedef enum
- {
- 	DestNone,					/* results are discarded */
- 	DestDebug,					/* results go to debugging output */
-+	DestLog,					/* added permanently for pg_execplan test purposes */
- 	DestRemote,					/* results sent to frontend process */
- 	DestRemoteExecute,			/* sent to frontend, in Execute command */
- 	DestRemoteSimple,			/* sent to frontend, w/no catalog access */
 diff --git a/src/include/utils/lsyscache.h b/src/include/utils/lsyscache.h
-index e868d84cef..d1bfabe891 100644
+index e868d84cef..4c55396376 100644
 --- a/src/include/utils/lsyscache.h
 +++ b/src/include/utils/lsyscache.h
 @@ -17,6 +17,8 @@
@@ -2132,12 +2002,11 @@ index e868d84cef..d1bfabe891 100644
  /* Result list element for get_op_btree_interpretation */
  typedef struct OpBtreeInterpretation
  {
-@@ -177,6 +179,18 @@ extern void free_attstatsslot(AttStatsSlot *sslot);
+@@ -177,6 +179,16 @@ extern void free_attstatsslot(AttStatsSlot *sslot);
  extern char *get_namespace_name(Oid nspid);
  extern char *get_namespace_name_or_temp(Oid nspid);
  extern Oid	get_range_subtype(Oid rangeOid);
 +extern char *get_typ_name(Oid typid);
-+
 +extern Oid get_typ_namespace(Oid typid);
 +extern Oid get_typname_typid(const char *typname, Oid typnamespace);
 +extern Oid get_funcid(const char *funcname, oidvector *argtypes, Oid funcnsp);
@@ -2147,12 +2016,11 @@ index e868d84cef..d1bfabe891 100644
 +extern Oid get_opnamespace(Oid opno);
 +extern Oid get_operid(const char *oprname, Oid oprleft, Oid oprright, Oid oprnsp);
 +extern char *get_rule_name(Oid ruleoid, Oid *ev_class);
-+
  
  #define type_is_array(typid)  (get_element_type(typid) != InvalidOid)
  /* type_is_array_domain accepts both plain arrays and domains over arrays */
 diff --git a/src/include/utils/plancache.h b/src/include/utils/plancache.h
-index ab20aa04b0..d2c85648a1 100644
+index ab20aa04b0..c5424717e4 100644
 --- a/src/include/utils/plancache.h
 +++ b/src/include/utils/plancache.h
 @@ -17,6 +17,7 @@
@@ -2163,10 +2031,10 @@ index ab20aa04b0..d2c85648a1 100644
  #include "utils/queryenvironment.h"
  
  /* Forward declaration, to avoid including parsenodes.h here */
-@@ -181,5 +182,5 @@ extern CachedPlan *GetCachedPlan(CachedPlanSource *plansource,
+@@ -181,5 +182,6 @@ extern CachedPlan *GetCachedPlan(CachedPlanSource *plansource,
  			  bool useResOwner,
  			  QueryEnvironment *queryEnv);
  extern void ReleaseCachedPlan(CachedPlan *plan, bool useResOwner);
--
 +extern void SetRemoteSubplan(CachedPlanSource *plansource, PlannedStmt *rstmt);
+
  #endif							/* PLANCACHE_H */

@@ -536,11 +536,11 @@ HOOK_shmem_startup(void)
 
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
-	ExchShmem = ShmemInitStruct("pg_exchange",
+	ExchShmem = ShmemInitStruct("exchange",
 								sizeof(ExchangeSharedState),
 								&found);
 	if (!found)
-		ExchShmem->lock = &(GetNamedLWLockTranche("pg_exchange"))->lock;
+		ExchShmem->lock = &(GetNamedLWLockTranche("exchange"))->lock;
 
 	ExchShmem->htab = ShmemInitHash("dmq_destinations",
 								10,
@@ -566,7 +566,6 @@ EXEC_Hooks_init(void)
 
 	EXCHANGE_Init_methods();
 	DUMMYSCAN_Init_methods();
-	EXEC_Hooks_init();
 
 	RequestAddinShmemSpace(shmem_size());
 	RequestNamedLWLockTranche("exchange", 1);

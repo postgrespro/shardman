@@ -368,11 +368,11 @@ begin
 end
 $$ language plpgsql strict;
 
-CREATE OR REPLACE FUNCTION @extschema@.pg_exec_plan(query TEXT, plan TEXT, params TEXT, serverName TEXT)
+CREATE OR REPLACE FUNCTION pg_exec_plan(query TEXT, plan TEXT, params TEXT, serverName TEXT)
 RETURNS BOOL AS 'MODULE_PATHNAME'
 LANGUAGE C;
 
 -- message queue receiver, for internal use only
-CREATE FUNCTION dmq_receiver_loop(sender_name text) RETURNS void
+CREATE OR REPLACE FUNCTION dmq_receiver_loop(sender_name text) RETURNS void
 AS 'MODULE_PATHNAME','dmq_receiver_loop'
 LANGUAGE C;

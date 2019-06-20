@@ -300,7 +300,6 @@ SendTuple(DmqDestinationId dest_id, char *stream, TupleTableSlot *slot)
 	Assert(!TupIsNull(slot));
 
 	if (!TTS_HAS_PHYSICAL_TUPLE(slot))
-//	if (slot->tts_tuple == NULL)
 		ExecMaterializeSlot(slot);
 
 	buf = getOutBuffer(ostream, dest_id);

@@ -25,6 +25,7 @@
 
 #include "common.h"
 #include "dmq.h"
+#include "hooks.h"
 #include "meta.h"
 #include "planpass.h"
 #include "shardman.h"
@@ -113,7 +114,7 @@ _PG_init()
 	/* Install hooks */
 	PreviousProcessUtilityHook = ProcessUtility_hook;
 	ProcessUtility_hook = HPProcessUtility;
-
+	EXEC_Hooks_init();
 	dmq_init("shardman");
 }
 
