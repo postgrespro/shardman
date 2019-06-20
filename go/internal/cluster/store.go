@@ -167,7 +167,10 @@ func (cs *ClusterStore) UpdateStolonSpec(ctx context.Context, hpc *StoreConnInfo
 			return err
 		}
 	} else {
-		newspec = currentspec
+		err = json.Unmarshal(specdata, &newspec)
+		if err != nil {
+			return fmt.Errorf("Failed to unmarshal new cluster spec: %v", err)
+		}
 	}
 
 	// sj, _ := json.Marshal(newspec)
