@@ -2,7 +2,10 @@
     "LadleSpec": {
 	"DataDir": "{{ data_dir }}",
 	"StolonBinPath": "{{ stolon_src }}/bin",
-	"PgBinPath": "{{ pg_inst }}/bin"
+	"PgBinPath": "{{ pg_inst }}/bin",
+	"KeepersInitialPort": 5442,
+	"Repfactor": 1,
+	"MonitorsNum": 2
     },
     "ClusterSpec": {
 	"PgSuAuthMethod": "trust",

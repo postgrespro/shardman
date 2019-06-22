@@ -111,3 +111,33 @@
   become: yes
   tags:
     - ntp
+
+- name: allow ptrace for non-root users permanently
+  lineinfile: dest=/etc/sysctl.d/10-ptrace.conf
+    regexp='^kernel.yama.ptrace_scope'
+    line='kernel.yama.ptrace_scope = 0'
+    state=present
+  become: yes
+  tags:
+    - allow_ptrace
+
+- name: allow ptrace for non-root users right now
+  shell: echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+  become: yes
+  tags:
+    - allow_ptrace
+
+- name: set ulimit -c unlimited
+  pam_limits: domain={{ ansible_user }}
+    limit_type=soft
+    limit_item=core
+    value=unlimited
+  become: yes
+  tags:
+    - dump_core
+
+- name: dump cores in /tmp
+  shell: echo '/tmp/core.%e.%p.%t' | sudo tee /proc/sys/kernel/core_pattern
+  become: yes
+  tags:
+    - dump_core

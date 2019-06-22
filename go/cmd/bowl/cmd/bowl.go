@@ -22,8 +22,8 @@ import (
 
 	cmdcommon "postgrespro.ru/shardman/cmd"
 	"postgrespro.ru/shardman/internal/cluster"
-	"postgrespro.ru/shardman/internal/hplog"
 	"postgrespro.ru/shardman/internal/ladle"
+	"postgrespro.ru/shardman/internal/shmnlog"
 	"postgrespro.ru/shardman/internal/utils"
 )
 
@@ -35,7 +35,7 @@ var hostname string
 var keeperUnitRegexp *regexp.Regexp
 var ourUnitsRegexp *regexp.Regexp
 
-var hl *hplog.Logger
+var hl *shmnlog.Logger
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -43,7 +43,7 @@ var rootCmd = &cobra.Command{
 	Version: cmdcommon.ShardmanVersion,
 	Short:   "deployment daemon for shardman",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
-		hl = hplog.GetLoggerWithLevel(logLevel)
+		hl = shmnlog.GetLoggerWithLevel(logLevel)
 
 		if err := cmdcommon.CheckConfig(&cfg); err != nil {
 			hl.Fatalf("%v", err)
@@ -178,6 +178,7 @@ type unitI interface {
 	reenableNow(c *dbus.Conn) error
 }
 
+// Implements unitI
 type unit struct {
 	name string
 }

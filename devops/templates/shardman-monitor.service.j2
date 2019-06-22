@@ -1,6 +1,8 @@
 [Unit]
 Description=monitoring daemon for shardman
 Documentation=https://github.com/arssher/shardman
+# we want to stop monitor when bowl is stopped
+PartOf=shardman-bowl-{{ cluster_name }}.service
 
 [Service]
 Type=simple

@@ -3,8 +3,8 @@
 
 - name: create pg dir
   file: path="{{ pg_prefix }}" state=directory
-  # tags:
-    # - always
+  tags:
+    - build_pg
 
 - name: clone postgres sources {{ pg_repo }}/{{ pg_version_tag }}
   git: repo={{pg_repo}}
@@ -13,8 +13,17 @@
     depth=1
     accept_hostkey=True
     force=yes
+  when: pg_use_repo | bool
   tags:
     - build_pg
+
+- name: copy postgres sources from {{ pg_local_dir }}
+  synchronize:
+    src="{{ pg_local_dir }}"
+    dest="{{ pg_src }}"
+  when: not (pg_use_repo | bool)
+  tags:
+    - copy_pg
 
 - name: copy patch to avoid TRUNCATE in pgbench -I=g
   copy:
@@ -33,11 +42,20 @@
     - pgbench_no_truncate_patch
 
 - name: build and install pg
-  shell: ./configure --prefix={{pg_inst}} --enable-debug && make clean && make -j {{makejobs}} && make install
+  shell: make maintainer-clean && CFLAGS="{{ cflags }}" ./configure --prefix={{pg_inst}} --enable-debug && make clean && make -j {{makejobs}} && make install && cd contrib/postgres_fdw && make clean && make -j {{ makejobs }} install
   args:
     chdir: "{{ pg_src }}"
   tags:
     - build_pg
+    - ffu
+
+- name: build and install postgres_fdw
+  shell: make clean && make -j {{ makejobs }} install
+  args:
+    chdir: "{{ pg_src }}/contrib/postgres_fdw"
+  tags:
+    - build_pg
+    - build_postgres_fdw
 
 - name: add postgres binaries to PATH in .bashrc
   lineinfile:

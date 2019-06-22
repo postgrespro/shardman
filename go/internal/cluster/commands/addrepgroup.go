@@ -13,11 +13,11 @@ import (
 	"github.com/jackc/pgx"
 
 	"postgrespro.ru/shardman/internal/cluster"
-	"postgrespro.ru/shardman/internal/hplog"
 	"postgrespro.ru/shardman/internal/pg"
+	"postgrespro.ru/shardman/internal/shmnlog"
 )
 
-func AddRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore, hpc *cluster.StoreConnInfo, newrg *cluster.RepGroup) error {
+func AddRepGroup(ctx context.Context, hl *shmnlog.Logger, cs *cluster.ClusterStore, hpc *cluster.StoreConnInfo, newrg *cluster.RepGroup) error {
 	cldata, _, err := cs.GetClusterData(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot get cluster data: %v", err)

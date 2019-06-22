@@ -1,7 +1,13 @@
 ---
 
 - hosts: nodes
+  any_errors_fatal: true  # abort on first error
   tasks:
+  - name: load custom vars from custom_vars.yml (will fail if not found, that's ok)
+    include_vars:
+      file: custom_vars.yml
+    # proceed if file not found
+    ignore_errors: yes
 
   # to run something iff tags were specified
   - shell: /bin/true
@@ -17,22 +23,36 @@
       - common
 
 - hosts: etcd_nodes
+  any_errors_fatal: true  # abort on first error
   tasks:
+  - name: load custom vars from custom_vars.yml (will fail if not found, that's ok)
+    include_vars:
+      file: custom_vars.yml
+    # proceed if file not found
+    ignore_errors: yes
   - import_role:
       name: etcd
     tags:
       - etcd
 
 - hosts: nodes
+  any_errors_fatal: true  # abort on first error
   tasks:
-  - import_role:
-      name: postgres
+  - name: load custom vars from custom_vars.yml (will fail if not found, that's ok)
+    include_vars:
+      file: custom_vars.yml
+    # proceed if file not found
+    ignore_errors: yes
     tags:
-      - postgres
+      - always
   - import_role:
       name: stolon
     tags:
       - stolon
+  - import_role:
+      name: postgres
+    tags:
+      - postgres
   - import_role:
       name: shardman
     tags:

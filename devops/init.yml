@@ -2,6 +2,7 @@
 ---
 
 - hosts: nodes
+  any_errors_fatal: true  # abort on first error
   tasks:
   - name: "run user dbus (actually useful only for development: bowl service file requires it anyway)"
     systemd:
@@ -24,10 +25,14 @@
     - bowl_unit
     - units
 
-  - name: destoy data dir
+  - name: destoy data dir "{{ data_dir }}"
     file: path="{{ data_dir }}" state=absent
     tags:
       - destory_data_dir
+    # during development, running daemons constantly write into this dir, so try
+    # multiple times and ignore errors
+    loop: [1, 2, 3]
+    ignore_errors: yes
 
   - name: create data dir
     file: path="{{ data_dir }}" state=directory
@@ -101,7 +106,7 @@
     tags:
     - init
 
-  - name: add nodes
+  - name: "add nodes: shardman-ladle --store-endpoints {{ lookup('template', 'etcd_endpoints.j2') }} --cluster-name {{ cluster_name }} addnodes -n {{ lookup('template', 'comma_separated_nodes.j2') }}"
     command: shardman-ladle --store-endpoints {{ lookup('template', 'etcd_endpoints.j2') }} --cluster-name {{ cluster_name }} addnodes -n {{ lookup('template', 'comma_separated_nodes.j2') }}
     run_once: true
     tags:

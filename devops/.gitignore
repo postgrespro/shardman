@@ -4,3 +4,6 @@ inventory_manual/manual
 # vagrant stuff
 *.log
 .vagrant/
+Vagrantfile
+
+custom_vars.yml

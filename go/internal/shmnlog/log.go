@@ -1,6 +1,6 @@
 // Copyright (c) 2018, Postgres Professional
 
-package hplog
+package shmnlog
 
 import (
 	"fmt"

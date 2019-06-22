@@ -14,8 +14,8 @@ import (
 	"go.uber.org/zap"
 
 	"postgrespro.ru/shardman/internal/cluster"
-	"postgrespro.ru/shardman/internal/hplog"
 	"postgrespro.ru/shardman/internal/pg"
+	"postgrespro.ru/shardman/internal/shmnlog"
 )
 
 type MoveTask struct {
@@ -125,7 +125,7 @@ CLOSE_CONNS:
 // The communication is simple: worker starts with task, completes it, sends
 // report and receives from main worker another one. One exception:
 // when in chan is closed (no deadlock risks), worker must exit asap.
-func movePartWorkerMain(hl *hplog.Logger, in <-chan MoveTask, out chan<- report, myid int) {
+func movePartWorkerMain(hl *shmnlog.Logger, in <-chan MoveTask, out chan<- report, myid int) {
 	var state = movePartWorkerIdle
 	var src_conn *pgx.Conn = nil
 	var dst_conn *pgx.Conn = nil
@@ -309,7 +309,7 @@ func movePartWorkerMain(hl *hplog.Logger, in <-chan MoveTask, out chan<- report,
 	}
 }
 
-func Rebalance(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore, p int, tasks []MoveTask) error {
+func Rebalance(ctx context.Context, hl *shmnlog.Logger, cs *cluster.ClusterStore, p int, tasks []MoveTask) error {
 	// fill connstrs
 	connstrs, err := pg.GetSuConnstrs(ctx, cs)
 	if err != nil {
