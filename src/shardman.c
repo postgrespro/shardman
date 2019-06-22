@@ -46,11 +46,11 @@ int MyRgid;
 static bool broadcast_utility;
 
 static bool AmCoordinator(void);
-static void HPProcessUtility(PlannedStmt *pstmt,
-							 const char *queryString, ProcessUtilityContext context,
-							 ParamListInfo params,
-							 QueryEnvironment *queryEnv,
-							 DestReceiver *dest, char *completionTag);
+static void ShmnProcessUtility(PlannedStmt *pstmt,
+							   const char *queryString, ProcessUtilityContext context,
+							   ParamListInfo params,
+							   QueryEnvironment *queryEnv,
+							   DestReceiver *dest, char *completionTag);
 static void Ex(int rgid, char *sql);
 static void ExLocal(char *sql);
 static void BcstAll(char *sql);
@@ -113,17 +113,22 @@ _PG_init()
 
 	/* Install hooks */
 	PreviousProcessUtilityHook = ProcessUtility_hook;
-	ProcessUtility_hook = HPProcessUtility;
+	ProcessUtility_hook = ShmnProcessUtility;
 	EXEC_Hooks_init();
 	dmq_init("shardman");
 }
 
 static bool AmCoordinator(void)
 {
-	return strstr(application_name, "pgfdw:") == NULL;
+	return strstr(application_name, "pgfdw:") == NULL &&
+		/*
+		 * Temporary plaster for vanilla postgres_fdw; we anyway need more advanced
+		 * application_name for deadlock detector.
+		 */
+		strstr(application_name, "postgres_fdw") == NULL;
 }
 
-static void HPProcessUtility(PlannedStmt *pstmt,
+static void ShmnProcessUtility(PlannedStmt *pstmt,
 							 const char *queryString, ProcessUtilityContext context,
 							 ParamListInfo params,
 							 QueryEnvironment *queryEnv,
@@ -173,8 +178,7 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 		case T_GrantRoleStmt:
 		case T_ClusterStmt:
 		{
-			if (consider_broadcast)
-				broadcast = true;
+			broadcast = consider_broadcast;
 			break;
 		}
 
@@ -189,20 +193,17 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 					Oid parent_oid = RangeVarGetRelid(parent, NoLock, false);
 
 					if (RelIsSharded(parent_oid))
-						goto end_of_switch;
+						break;
 				}
 
-				if (consider_broadcast)
-					broadcast = true;
-				break;
+				broadcast = consider_broadcast;
 			}
 			break;
 
 
 		case T_DefineStmt:
 		{
-			if (consider_broadcast)
-				broadcast = true;
+			broadcast = consider_broadcast;
 			break;
 		}
 
@@ -223,7 +224,7 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 					}
 				} else if (stmt->removeType == OBJECT_FOREIGN_SERVER)
 				{
-					goto end_of_switch;
+					break; /* xxx allow user foreign servers */
 				} else if (stmt->removeType == OBJECT_TABLE)
 				{
 					ListCell *cell;
@@ -240,8 +241,7 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 					}
 				}
 
-				if (consider_broadcast)
-					broadcast = true;
+				broadcast = consider_broadcast;
 			}
 			break;
 
@@ -308,8 +308,8 @@ static void HPProcessUtility(PlannedStmt *pstmt,
 		case T_CreateStatsStmt:
 		case T_AlterCollationStmt:
 		{
-			if (consider_broadcast)
-				broadcast = true;
+			/* Those are mostly fine to broadcast */
+			broadcast = consider_broadcast;
 			break;
 		}
 

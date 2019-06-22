@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	cmdcommon "postgrespro.ru/shardman/cmd"
 	"postgrespro.ru/shardman/internal/cluster"
-	"postgrespro.ru/shardman/internal/hplog"
+	"postgrespro.ru/shardman/internal/shmnlog"
 	"postgrespro.ru/shardman/internal/utils"
 )
 
@@ -18,7 +18,7 @@ import (
 var cfg cluster.ClusterStoreConnInfo
 var logLevel string
 
-var hl *hplog.Logger
+var hl *shmnlog.Logger
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -26,7 +26,7 @@ var rootCmd = &cobra.Command{
 	Version: cmdcommon.ShardmanVersion,
 	Short:   "shardman command line client. Note: you must always run at most one instance of shardmanctl at time.",
 	PersistentPreRun: func(c *cobra.Command, args []string) {
-		hl = hplog.GetLoggerWithLevel(logLevel)
+		hl = shmnlog.GetLoggerWithLevel(logLevel)
 
 		if err := cmdcommon.CheckConfig(&cfg); err != nil {
 			hl.Fatalf(err.Error())

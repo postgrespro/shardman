@@ -17,8 +17,10 @@ done directly via SQL on any master.
 
 Replication groups themselves don't know anything about physical location of
 Postgres instances. When repgroup is being added to the cluster with
-`shardmanctl`, it is assumed that Stolon instance forming it already
-exists. Here comes the second layer, making this horribly complicated deploy
+`shardmanctl`, it is assumed that Stolon instance forming it already exists.
+Moreover, for efficient utilization of nodes each node should keep one master and
+several replicas; otherwise only one core of node currently holding replica
+would be utilized. Here comes the second layer, making this horribly complicated deploy
 easier. With `shardman-ladle` you specify cluster conf and register physical
 nodes: `ladle` computes which daemons (stolon keepers, sentinels, shardman
 monitors) will run on on which nodes and their parameters. It pushes this info
@@ -44,7 +46,9 @@ and also `<binary> <command> --help` per-command help.
 
 `devops/` dir contains Ansible scripts and templates of service files used by
 `shardman-bowl` to start systemd units. Playbooks behaviour is influenced by
-vars listed in `group_vars/all.yml` with their defaults. Playbooks operate on
+vars listed in `group_vars/all.yml` with their defaults. You can overwrite them
+by directly specifying in `--extra-vars` or by setting vars in `custom_vars.yml`
+-- this file is read by every play and not tracked by git. Playbooks operate on
 `nodes` and `etcd_nodes` groups; `inventory_manual` has an example of simple
 inventory.  `provision.yml` installs everything needed: etcd, postgres, stolon,
 shardman. Also, during execution of etcd role, a etcd cluster is configured
@@ -52,17 +56,38 @@ shardman. Also, during execution of etcd role, a etcd cluster is configured
 it instantiates all needed service files, starts `shardman-bowl` daemons and
 executes `shardman-ladle`, creating cluster and adding `nodes` to it.
 
+Simple `bowl.yml` can be used for bowl daemons management, e.g. to stop
+everything:
+```
+ansible-playbook -i inventory_manual/ bowl.yml -e "state=stopped"
+```
+
 #### Example
 
-Probably simplest way to test things is to fire up 4 nodes via `vagrant up`.
-Inventory for them is listed in `inventory_manual.example`. Uncomment it, and then
+Probably simplest way to test things is to fire up 4 nodes via `vagrant up` with
+provided example:
 ```
 cd devops/
-pipenv install && pipenv shell # install and activate python env with installed ansible
+cp Vagrantfile.example Vagrantfile
+vagrant up
+```
+Inventory for them is listed in `inventory_manual.example`. Uncomment it like
+```
+sed -e 's/# \?//' inventory_manual/manual.example > inventory_manual/manual
+```
+and then
+```
+# install and activate python env with installed ansible
+pipenv install && pipenv shell
 ansible-playbook -i inventory_manual/ provision.yml
 ```
-This installs etcd, configured etcd cluster on `etcd_nodes`, installs postgres,
-stolon, shardman everywhere (on `nodes`).
+This installs etcd, configured etcd cluster on `etcd_nodes`, installs stolon,
+postgres, shardman everywhere (on `nodes`).
+
+By default, provision.yml assumes that this repo (shardman) is cloned to
+contrib/shardman directory of Postgres source tree with REL\_11\_STABLE.patch
+applied. This can be altered to use repository with patched PG instead; see
+all.yml.
 
 Then
 ```

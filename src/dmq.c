@@ -40,6 +40,7 @@
 #include "executor/executor.h"
 #include "utils/builtins.h"
 #include "utils/timestamp.h"
+#include "storage/latch.h"
 #include "storage/shm_toc.h"
 #include "storage/shm_mq.h"
 #include "storage/ipc.h"
@@ -1773,4 +1774,3 @@ dmq_destination_drop(const char *receiver_name)
 	if (sender_pid)
 		kill(sender_pid, SIGHUP);
 }
-

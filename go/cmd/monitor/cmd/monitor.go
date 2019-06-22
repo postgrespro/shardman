@@ -23,8 +23,8 @@ import (
 
 	cmdcommon "postgrespro.ru/shardman/cmd"
 	"postgrespro.ru/shardman/internal/cluster"
-	"postgrespro.ru/shardman/internal/hplog"
 	"postgrespro.ru/shardman/internal/pg"
+	"postgrespro.ru/shardman/internal/shmnlog"
 	"postgrespro.ru/shardman/internal/utils"
 )
 
@@ -36,7 +36,7 @@ var checkDeadlockIntervalRaw string
 var checkDeadlockInterval time.Duration
 var logLevel string
 
-var hl *hplog.Logger
+var hl *shmnlog.Logger
 
 var shmonCmd = &cobra.Command{
 	Use: "shardman-monitor",
@@ -125,7 +125,7 @@ type repGroupState struct {
 // TODO: we should we add ctx to all pg's commands to prevent any worker
 // hanging, blocking everything
 func shmon(c *cobra.Command, args []string) {
-	hl = hplog.GetLoggerWithLevel(logLevel)
+	hl = shmnlog.GetLoggerWithLevel(logLevel)
 
 	var state shMonState
 	state.workers = make(map[int]chan clusterState)

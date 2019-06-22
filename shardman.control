@@ -4,3 +4,4 @@ default_version = '0.0.1'
 relocatable = false
 schema = shardman
 module_pathname = '$libdir/shardman'
+requires = postgres_fdw

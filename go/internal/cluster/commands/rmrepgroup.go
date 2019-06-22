@@ -9,11 +9,11 @@ import (
 	"github.com/jackc/pgx"
 
 	"postgrespro.ru/shardman/internal/cluster"
-	"postgrespro.ru/shardman/internal/hplog"
 	"postgrespro.ru/shardman/internal/pg"
+	"postgrespro.ru/shardman/internal/shmnlog"
 )
 
-func RmRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore, rmRepGroupName string) error {
+func RmRepGroup(ctx context.Context, hl *shmnlog.Logger, cs *cluster.ClusterStore, rmRepGroupName string) error {
 	cldata, _, err := cs.GetClusterData(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot get cluster data: %v", err)
@@ -86,7 +86,7 @@ func RmRepGroup(ctx context.Context, hl *hplog.Logger, cs *cluster.ClusterStore,
 }
 
 // build tasks to move all partitions from given repgroup
-func free_rg_tasks(hl *hplog.Logger, frgid int, tables []cluster.Table, rgs map[int]*cluster.RepGroup) []MoveTask {
+func free_rg_tasks(hl *shmnlog.Logger, frgid int, tables []cluster.Table, rgs map[int]*cluster.RepGroup) []MoveTask {
 	var tasks = make([]MoveTask, 0)
 	var rgids = make([]int, len(rgs)-1)
 	var i = 0

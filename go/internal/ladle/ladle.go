@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx"
 	"postgrespro.ru/shardman/internal/cluster"
 	"postgrespro.ru/shardman/internal/cluster/commands"
-	"postgrespro.ru/shardman/internal/hplog"
 	"postgrespro.ru/shardman/internal/pg"
+	"postgrespro.ru/shardman/internal/shmnlog"
 	"postgrespro.ru/shardman/internal/store"
 )
 
@@ -174,7 +174,7 @@ func adjustSpecDefaults(spec *LadleSpec, clusterStoreConnInfo *cluster.StoreConn
 	}
 
 	if spec.KeepersInitialPort == 0 {
-		spec.KeepersInitialPort = 5433
+		spec.KeepersInitialPort = 5442
 	}
 	if spec.MonitorsNum == nil {
 		defaultMonitorsNum := 2
@@ -198,7 +198,7 @@ func validateSpec(spec *LadleSpec) error {
 	return nil
 }
 
-func (ls *LadleStore) InitCluster(ctx context.Context, hl *hplog.Logger, spec *LadleSpec, clusterSpec *cluster.ClusterSpec, clusterStoreConnInfo *cluster.ClusterStoreConnInfo) error {
+func (ls *LadleStore) InitCluster(ctx context.Context, hl *shmnlog.Logger, spec *LadleSpec, clusterSpec *cluster.ClusterSpec, clusterStoreConnInfo *cluster.ClusterStoreConnInfo) error {
 	// fill defaults and validate config
 	adjustSpecDefaults(spec, &clusterStoreConnInfo.StoreConnInfo)
 	if err := validateSpec(spec); err != nil {
@@ -259,7 +259,7 @@ func issueCloverSeq(ldata *LadleData) int {
 	return res
 }
 
-func (ls *LadleStore) AddNodes(ctx context.Context, hl *hplog.Logger, nodes []string) error {
+func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []string) error {
 	ldata, _, cldata, _, err := ls.GetLadleAndClusterData(ctx)
 	if err != nil {
 		return err
@@ -430,7 +430,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *hplog.Logger, nodes []st
 }
 
 // make sure that stolon instances are created for all replication groups
-func (ls *LadleStore) FixRepGroups(ctx context.Context, hl *hplog.Logger) error {
+func (ls *LadleStore) FixRepGroups(ctx context.Context, hl *shmnlog.Logger) error {
 	ldata, _, cldata, _, err := ls.GetLadleAndClusterData(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot get ladle/cluster data: %v", err)
@@ -490,7 +490,7 @@ func (ls *LadleStore) FixRepGroups(ctx context.Context, hl *hplog.Logger) error 
 	return nil
 }
 
-func (ls *LadleStore) RmNodes(ctx context.Context, hl *hplog.Logger, nodes []string) error {
+func (ls *LadleStore) RmNodes(ctx context.Context, hl *shmnlog.Logger, nodes []string) error {
 	ldata, _, err := ls.GetLadleData(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot get ladle/cluster data: %v", err)

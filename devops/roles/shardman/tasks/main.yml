@@ -10,6 +10,11 @@
     force=yes
   when: shardman_use_repo | bool
 
+- name: clean up "{{ shardman_src }}", just in case...
+  file: path="{{ shardman_src }}" state=absent
+  tags:
+    - copy_shardman
+
 - name: copy shardman from {{ shardman_local_dir }}
   synchronize:
     src="{{ shardman_local_dir }}"
@@ -22,6 +27,8 @@
   command: make
   args:
     chdir: "{{ shardman_src }}/go"
+  environment:
+    BUILD_P: "{{ GO_BUILD_P }}"
 
 - name: add shardman binaries to PATH in .bashrc
   lineinfile:
@@ -30,9 +37,9 @@
     # important, otherwise not read in non-interactive sessions
     insertbefore: BOF
 
-- name: build and install shardman ext
+- name: build and install shardman ext in "{{ shardman_src }}"
   shell: make clean && make && make -j {{ makejobs }} install
   args:
-    chdir: "{{ shardman_src }}/ext"
+    chdir: "{{ shardman_src }}"
   tags:
     - shardman_ext
