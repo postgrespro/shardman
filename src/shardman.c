@@ -160,7 +160,7 @@ static void ShmnProcessUtility(PlannedStmt *pstmt,
 
 	strncpy(stmt_string, queryString + stmt_start, stmt_len);
 	stmt_string[stmt_len] = '\0';
-	hp_log3("HPProcessUtility stmt %s, node %s, coordinator %d", stmt_string, nodeToString(parsetree), AmCoordinator());
+	shmn_log3("HPProcessUtility stmt %s, node %s, coordinator %d", stmt_string, nodeToString(parsetree), AmCoordinator());
 
 	/*
 	 * We broadcast only in these cases. No need to broadcast extenstion
@@ -333,7 +333,7 @@ end_of_switch:
 
 	if (broadcast)
 	{
-		hp_log1("Broadcasting stmt %s, node %s", stmt_string, nodeToString(parsetree));
+		shmn_log1("Broadcasting stmt %s, node %s", stmt_string, nodeToString(parsetree));
 		Bcst(stmt_string);
 
 	}
@@ -377,7 +377,7 @@ static void Ex(int rgid, char *sql)
 	}
 
 	/* external */
-	hp_log2("executing cmd %s on external rgid %d", sql, rgid);
+	shmn_log2("executing cmd %s on external rgid %d", sql, rgid);
 	ExServer(serverid, sql);
 }
 
@@ -386,15 +386,15 @@ static void ExLocal(char *sql)
 {
 	int ret;
 
-	hp_log2("executing local cmd %s", sql);
+	shmn_log2("executing local cmd %s", sql);
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 	{
-		hp_elog(ERROR, "SPI_connect failed: %d", ret);
+		shmn_elog(ERROR, "SPI_connect failed: %d", ret);
 	}
 
 	if ((ret = SPI_exec(sql, 0)) < 0)
 	{
-		hp_elog(ERROR, "SPI_exec failed: %d", ret);
+		shmn_elog(ERROR, "SPI_exec failed: %d", ret);
 	}
 	SPI_finish();
 }
