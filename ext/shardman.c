@@ -37,6 +37,7 @@ PG_FUNCTION_INFO_V1(bcst_all_sql);
 /* GUC variables */
 int MyRgid;
 static bool broadcast_utility;
+static bool in_broadcast;
 
 static bool AmCoordinator(void);
 static void ShmnProcessUtility(PlannedStmt *pstmt,
@@ -44,6 +45,11 @@ static void ShmnProcessUtility(PlannedStmt *pstmt,
 							   ParamListInfo params,
 							   QueryEnvironment *queryEnv,
 							   DestReceiver *dest, char *completionTag);
+static bool BroadcastNeeded(PlannedStmt *pstmt,
+							const char *queryString, ProcessUtilityContext context,
+							ParamListInfo params,
+							QueryEnvironment *queryEnv,
+							DestReceiver *dest, char *completionTag);
 static void Ex(int rgid, char *sql);
 static void ExLocal(char *sql);
 static void BcstAll(char *sql);
@@ -112,7 +118,11 @@ static void ShmnProcessUtility(PlannedStmt *pstmt,
 	int stmt_len = pstmt->stmt_len > 0 ? pstmt->stmt_len : strlen(queryString + stmt_start);
 	char *stmt_string = palloc(stmt_len + 1);
 
-	if (!ShardmanLoaded())
+	/*
+	 * in_broadcast protects against repeated broadcast for the same statement
+	 * with multiple ProcessUtility's, e.g. create table with primary key.
+	 */
+	if (!ShardmanLoaded() || in_broadcast)
 	{
 		if (PreviousProcessUtilityHook != NULL)
 		{
@@ -128,10 +138,11 @@ static void ShmnProcessUtility(PlannedStmt *pstmt,
 		}
 		return;
 	}
+	in_broadcast = true;
 
 	strncpy(stmt_string, queryString + stmt_start, stmt_len);
 	stmt_string[stmt_len] = '\0';
-	shmn_log3("HPProcessUtility stmt %s, node %s, coordinator %d", stmt_string, nodeToString(parsetree), AmCoordinator());
+	shmn_log3("SHMNProcessUtility stmt %s, node %s, coordinator %d", stmt_string, nodeToString(parsetree), AmCoordinator());
 
 	/*
 	 * We broadcast only in these cases. No need to broadcast extenstion
@@ -139,6 +150,39 @@ static void ShmnProcessUtility(PlannedStmt *pstmt,
 	 */
 	consider_broadcast = AmCoordinator() && broadcast_utility &&
 		!creating_extension && MyRgid != -1;
+
+	if (consider_broadcast)
+		broadcast = BroadcastNeeded(pstmt, queryString, context, params,
+									queryEnv, dest, completionTag);
+
+	if (PreviousProcessUtilityHook != NULL)
+	{
+		PreviousProcessUtilityHook(pstmt, queryString,
+										 context, params, queryEnv,
+										 dest, completionTag);
+	}
+	else
+	{
+		standard_ProcessUtility(pstmt, queryString,
+									context, params, queryEnv,
+									dest, completionTag);
+	}
+
+	if (broadcast)
+	{
+		shmn_log1("Broadcasting stmt %s, node %s", stmt_string, nodeToString(parsetree));
+		Bcst(stmt_string);
+	}
+	in_broadcast = false;
+}
+
+static bool BroadcastNeeded(PlannedStmt *pstmt,
+							 const char *queryString, ProcessUtilityContext context,
+							 ParamListInfo params,
+							 QueryEnvironment *queryEnv,
+							 DestReceiver *dest, char *completionTag)
+{
+	Node *parsetree = pstmt->utilityStmt;
 
 	// TODO TODO TODO
 	switch (nodeTag(parsetree))
@@ -148,10 +192,9 @@ static void ShmnProcessUtility(PlannedStmt *pstmt,
 		case T_GrantStmt:
 		case T_GrantRoleStmt:
 		case T_ClusterStmt:
-		{
-			broadcast = consider_broadcast;
-			break;
-		}
+			{
+				return true;
+			}
 
 		case T_CreateStmt:
 			{
@@ -164,18 +207,15 @@ static void ShmnProcessUtility(PlannedStmt *pstmt,
 					Oid parent_oid = RangeVarGetRelid(parent, NoLock, false);
 
 					if (RelIsSharded(parent_oid))
-						break;
+						return false;
 				}
 
-				broadcast = consider_broadcast;
+				return true;
 			}
-			break;
-
 
 		case T_DefineStmt:
 		{
-			broadcast = consider_broadcast;
-			break;
+			return true;
 		}
 
 		case T_DropStmt:
@@ -191,11 +231,11 @@ static void ShmnProcessUtility(PlannedStmt *pstmt,
 						Node	   *object = lfirst(cell1);
 
 						if (strcmp(strVal((Value *) object), "shardman") == 0)
-							goto end_of_switch;
+							return false;
 					}
 				} else if (stmt->removeType == OBJECT_FOREIGN_SERVER)
 				{
-					break; /* xxx allow user foreign servers */
+					return false; /* xxx allow user foreign servers */
 				} else if (stmt->removeType == OBJECT_TABLE)
 				{
 					ListCell *cell;
@@ -212,7 +252,7 @@ static void ShmnProcessUtility(PlannedStmt *pstmt,
 					}
 				}
 
-				broadcast = consider_broadcast;
+				return true;
 			}
 			break;
 
@@ -280,33 +320,11 @@ static void ShmnProcessUtility(PlannedStmt *pstmt,
 		case T_AlterCollationStmt:
 		{
 			/* Those are mostly fine to broadcast */
-			broadcast = consider_broadcast;
-			break;
+			return true;
 		}
 
 		default:
-			break;
-	}
-end_of_switch:
-
-	if (PreviousProcessUtilityHook != NULL)
-	{
-		PreviousProcessUtilityHook(pstmt, queryString,
-										 context, params, queryEnv,
-										 dest, completionTag);
-	}
-	else
-	{
-		standard_ProcessUtility(pstmt, queryString,
-									context, params, queryEnv,
-									dest, completionTag);
-	}
-
-	if (broadcast)
-	{
-		shmn_log1("Broadcasting stmt %s, node %s", stmt_string, nodeToString(parsetree));
-		Bcst(stmt_string);
-
+			return false;
 	}
 }
 
