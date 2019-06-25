@@ -121,8 +121,12 @@ func AddRepGroup(ctx context.Context, hl *shmnlog.Logger, cs *cluster.ClusterSto
 		dump_cmd := exec.Command("pg_dumpall", "--dbname", existing_connstr, "--clean", "--schema-only", "--if-exists")
 		dump, err := dump_cmd.Output()
 		if err != nil {
-			exiterr := err.(*exec.ExitError)
-			return fmt.Errorf("pg_dumpall failed: %v, stderr: %v", exiterr, string(exiterr.Stderr[:]))
+			var stderr = "<unknown>"
+			switch e := err.(type) {
+			case *exec.ExitError:
+				stderr = string(e.Stderr[:])
+			}
+			return fmt.Errorf("pg_dumpall failed: %v, stderr: %v", err, stderr)
 		}
 		// pg_dump won't copy data from extension tables, do that instead of him...
 		rgs_dump_cmd := exec.Command("psql", "--dbname", existing_connstr, "-c", "copy shardman.repgroups to stdout")

@@ -26,8 +26,9 @@ type ClusterStore struct {
 }
 
 type ClusterStoreConnInfo struct {
-	ClusterName   string
-	StoreConnInfo StoreConnInfo
+	ClusterName    string
+	StoreConnInfo  StoreConnInfo
+	RequestTimeout int // in seconds
 }
 
 type StoreConnInfo struct {
@@ -62,7 +63,7 @@ func NewClusterStore(cfg *ClusterStoreConnInfo) (*ClusterStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	etcdstore := store.NewEtcdV3Store(cli)
+	etcdstore := store.NewEtcdV3StoreWithTimout(cli, cfg.RequestTimeout)
 	storePath := filepath.Join("shardman", cfg.ClusterName)
 	return &ClusterStore{StorePath: storePath, Store: etcdstore, ClusterName: cfg.ClusterName}, nil
 }

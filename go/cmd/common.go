@@ -24,6 +24,8 @@ func AddCommonFlags(cmd *cobra.Command, cfg *cluster.ClusterStoreConnInfo, logLe
 		"certificate file for client identification to the store")
 	cmd.PersistentFlags().StringVar(&cfg.StoreConnInfo.Key, "store-key", "",
 		"private key file for client identification to the store")
+	cmd.PersistentFlags().IntVar(&cfg.RequestTimeout, "request-timeout",
+		5, "store timeout in seconds")
 
 	cmd.PersistentFlags().StringVar(logLevel, "log-level", "info",
 		"error|warn|info|debug")

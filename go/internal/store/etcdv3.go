@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	requestTimeout = 5 * time.Second
+	defaultRequestTimeout = 5 * time.Second
 )
 
 // KVPair represents {Key, Value, Lastindex} tuple
@@ -26,11 +26,17 @@ type KVPair struct {
 var DefaultEtcdEndpoints = [...]string{"http://127.0.0.1:2379"}
 
 type EtcdV3Store struct {
-	c *etcdclientv3.Client
+	c              *etcdclientv3.Client
+	requestTimeout time.Duration
 }
 
 func NewEtcdV3Store(cli *etcdclientv3.Client) EtcdV3Store {
-	return EtcdV3Store{c: cli}
+	return EtcdV3Store{c: cli, requestTimeout: defaultRequestTimeout}
+}
+
+// requestTimeout in seconds
+func NewEtcdV3StoreWithTimout(cli *etcdclientv3.Client, requestTimeout int) EtcdV3Store {
+	return EtcdV3Store{c: cli, requestTimeout: time.Duration(requestTimeout) * time.Second}
 }
 
 // get underlying client
@@ -39,14 +45,14 @@ func (s *EtcdV3Store) GetClient() *etcdclientv3.Client {
 }
 
 func (s *EtcdV3Store) Put(pctx context.Context, key string, value []byte) error {
-	ctx, cancel := context.WithTimeout(pctx, requestTimeout)
+	ctx, cancel := context.WithTimeout(pctx, s.requestTimeout)
 	_, err := s.c.Put(ctx, key, string(value))
 	cancel()
 	return err
 }
 
 func (s *EtcdV3Store) Get(pctx context.Context, key string) (*KVPair, error) {
-	ctx, cancel := context.WithTimeout(pctx, requestTimeout)
+	ctx, cancel := context.WithTimeout(pctx, s.requestTimeout)
 	resp, err := s.c.Get(ctx, key)
 	cancel()
 	if err != nil {

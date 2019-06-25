@@ -13,14 +13,16 @@ import (
 var nodesString string
 
 var addNodesCmd = &cobra.Command{
-	Use: "addnodes",
-	Run: addNodes,
-	Short: `Add nodes to the cluster. This is two-phase process: first ladle
-computes which daemons should run on which nodes and pushes this to etcd. bowl
-daemon who should be running on each target node reacts to this and starts those daemons.
-Ladle then waits for stolon instances to emerge, connects to them and performs initialization.
-If something failes after nodes were registered in etcd, but before stolon instances
-got initialized, fixrepgroups command can be used to retry initialization.`,
+	Use:   "addnodes",
+	Run:   addNodes,
+	Short: "Add nodes to the cluster",
+	Long: `Adding nodes to the cluster is a two-phase process: first ladle computes which
+daemons should run on which nodes and pushes this to etcd. bowl daemon who
+should be running on each target node reacts to this and starts those daemons.
+Ladle then waits for stolon instances to emerge, connects to them and performs
+initialization.  If something failes after nodes were registered in etcd, but
+before stolon instances got initialized, fixrepgroups command can be used to
+retry initialization.`,
 }
 
 func init() {
