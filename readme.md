@@ -85,9 +85,9 @@ This installs etcd, configured etcd cluster on `etcd_nodes`, installs stolon,
 postgres, shardman everywhere (on `nodes`).
 
 By default, provision.yml assumes that this repo (shardman) is cloned to
-contrib/shardman directory of Postgres source tree with REL\_11\_STABLE.patch
-applied. This can be altered to use repository with patched PG instead; see
-all.yml.
+contrib/shardman directory of patched Postgres source tree (with
+REL\_11\_STABLE_40dde829070d.patch applied). This can be altered to use
+repository with patched PG instead; see all.yml.
 
 Then
 ```
