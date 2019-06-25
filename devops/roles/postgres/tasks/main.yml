@@ -42,7 +42,7 @@
     - pgbench_no_truncate_patch
 
 - name: build and install pg
-  shell: make maintainer-clean && CFLAGS="{{ cflags }}" ./configure --prefix={{pg_inst}} --enable-debug && make clean && make -j {{makejobs}} && make install && cd contrib/postgres_fdw && make clean && make -j {{ makejobs }} install
+  shell: make maintainer-clean; CFLAGS="{{ cflags }}" ./configure --prefix={{pg_inst}} --enable-debug && make clean && make -j {{makejobs}} && make install && cd contrib/postgres_fdw && make clean && make -j {{ makejobs }} install
   args:
     chdir: "{{ pg_src }}"
   tags:
