@@ -6,7 +6,7 @@
   tags:
     - build_pg
 
-- name: clone postgres sources {{ pg_repo }}/{{ pg_version_tag }}
+- name: clone postgres sources {{ pg_repo }}/{{ pg_version_tag }} to {{ pg_src }}
   git: repo={{pg_repo}}
     dest={{pg_src}}
     version={{pg_version_tag}}
