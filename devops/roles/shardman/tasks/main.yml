@@ -1,6 +1,11 @@
 ---
 # install shardman
 
+- name: clean up "{{ shardman_src }}", just in case...
+  file: path="{{ shardman_src }}" state=absent
+  tags:
+    - copy_shardman
+
 - name: clone shardman sources {{ shardman_repo }}/{{ shardman_version_tag }}
   git: repo="{{ shardman_repo }}"
     dest="{{ shardman_src }}"
@@ -9,11 +14,8 @@
     accept_hostkey=True
     force=yes
   when: shardman_use_repo | bool
-
-- name: clean up "{{ shardman_src }}", just in case...
-  file: path="{{ shardman_src }}" state=absent
   tags:
-    - copy_shardman
+   - copy_shardman
 
 - name: copy shardman from {{ shardman_local_dir }}
   synchronize:
