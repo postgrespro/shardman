@@ -22,9 +22,6 @@ if __name__ == "__main__":
 
     with open('Vagrantfile', 'w+') as vf:
         vf.write('Vagrant.configure("2") do |config|\n')
-        vf.write("""  config.vm.network "private_network", ip: "{}.0", netmask: "255.255.255.0", dhcp_enabled: false
-
-""".format(network))
         for i in range(numnodes):
             nodenum = i + 1
             nodename = "{}{}".format(vboxname_prefix, nodenum)
