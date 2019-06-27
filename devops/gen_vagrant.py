@@ -12,19 +12,24 @@ if __name__ == "__main__":
     parser.add_argument('--vboxname-prefix', dest='vboxname_prefix', default="node", type=str,
                         help="Virtual box names prefix")
     parser.add_argument('-i', dest='first_ip_last_byte', default=11, type=int, help='last byte of ip of first node. ips are assigned skipping 10 addresses, e.g. .11, .21, etc')
+    parser.add_argument('--network', dest='network', default="10.42.42", type=str, help='/24 network')
     args = parser.parse_args()
 
     numnodes = args.numnodes
     vboxname_prefix = args.vboxname_prefix
     first_ip_last_byte = args.first_ip_last_byte
+    network = args.network
 
     with open('Vagrantfile', 'w+') as vf:
         vf.write('Vagrant.configure("2") do |config|\n')
+        vf.write("""  config.vm.network "private_network", ip: "{}.0", netmask: "255.255.255.0", dhcp_enabled: false
+
+""".format(network))
         for i in range(numnodes):
             nodenum = i + 1
             nodename = "{}{}".format(vboxname_prefix, nodenum)
             ip_last_byte = first_ip_last_byte + i * 10
-            ip = "10.42.42.{}".format(ip_last_byte)
+            ip = "{}.{}".format(network, ip_last_byte)
             hostname = "vg{}".format(nodenum)
 
             vf.write("""  config.vm.define "{}" do |node|
@@ -50,7 +55,7 @@ if __name__ == "__main__":
         for i in range(numnodes):
             nodenum = i + 1
             ip_last_byte = first_ip_last_byte + i * 10
-            ip = "10.42.42.{}".format(ip_last_byte)
+            ip = "{}.{}".format(network, ip_last_byte)
             hostname = "vg{}".format(nodenum)
             vf.write("""      echo "{} {}" >> /etc/hosts\n""".format(ip, hostname))
 
@@ -69,7 +74,7 @@ ansible_user=ubuntu
 """)
         for i in range(numnodes):
             ip_last_byte = first_ip_last_byte + i * 10
-            ip = "10.42.42.{}".format(ip_last_byte)
+            ip = "{}.{}".format(network, ip_last_byte)
             inv_f.write("""{}\n""".format(ip))
 
         inv_f.write("""
@@ -77,5 +82,5 @@ ansible_user=ubuntu
 """)
         for i in range(min(numnodes, 3)):
             ip_last_byte = first_ip_last_byte + i * 10
-            ip = "10.42.42.{}".format(ip_last_byte)
+            ip = "{}.{}".format(network, ip_last_byte)
             inv_f.write("""{}\n""".format(ip))
