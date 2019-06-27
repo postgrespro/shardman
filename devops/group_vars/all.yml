@@ -56,7 +56,7 @@ shardman_use_repo: False
 shardman_repo: https://github.com/postgrespro/shardman.git
 # when copied from local dir (slash in the end is important)
 shardman_local_dir: "{{ playbook_dir }}/../"
-shardman_version_tag: master
+shardman_version_tag: merge
 # can help building on systems with low memory, see Makefile
 GO_BUILD_P: ""
 shardman_src: "{{ pg_src }}/contrib/shardman"
