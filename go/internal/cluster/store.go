@@ -198,16 +198,16 @@ func (mue MasterUnavailableError) Error() string {
 	return "no masters found"
 }
 
-// Get current connstr for this rg as map of libpq options
+// Get current connstr for this rg as map of libpq options + priority of current master
 // if no master available, returns MasterUnavailableError
-func (cs *ClusterStore) GetSuConnstrMap(ctx context.Context, rg *RepGroup, cldata *ClusterData) (map[string]string, error) {
+func (cs *ClusterStore) GetSuConnstrMap(ctx context.Context, rg *RepGroup, cldata *ClusterData) (map[string]string, int, error) {
 	// if this rg has separate store, connect to it
 	var ss *StolonStore
 	if rg.StoreConnInfo.Endpoints != "" {
 		var err error
 		ss, err = NewStolonStore(rg)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		defer ss.Close()
 	} else {
@@ -223,10 +223,10 @@ func (cs *ClusterStore) GetSuConnstrMap(ctx context.Context, rg *RepGroup, cldat
 		ep, err = ss.GetMaster(ctx)
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if ep == nil {
-		return nil, MasterUnavailableError{}
+		return nil, 0, MasterUnavailableError{}
 	}
 
 	cp := map[string]string{
@@ -238,5 +238,5 @@ func (cs *ClusterStore) GetSuConnstrMap(ctx context.Context, rg *RepGroup, cldat
 	if cldata.Spec.PgSuAuthMethod != "trust" {
 		cp["password"] = cldata.Spec.PgSuPassword
 	}
-	return cp, nil
+	return cp, ep.Priority, nil
 }
