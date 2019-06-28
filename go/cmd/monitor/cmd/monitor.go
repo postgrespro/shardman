@@ -214,7 +214,7 @@ func reloadStore(state *shMonState) {
 
 	// learn connstrs
 	for rgid, rg := range rgs {
-		connstrmap, err := state.cs.GetSuConnstrMap(state.ctx, rg, cldata)
+		connstrmap, _, err := state.cs.GetSuConnstrMap(state.ctx, rg, cldata)
 		if err != nil {
 			hl.Errorf("Failed to get connstr for rgid %d: %v", rgid, err)
 			return

@@ -302,12 +302,19 @@ func GetSuConnstrs(ctx context.Context, cs *cluster.ClusterStore) (map[int]strin
 	return connstrs, nil
 }
 
-func GetSuConnstr(ctx context.Context, cs *cluster.ClusterStore, rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, error) {
-	cp, err := cs.GetSuConnstrMap(ctx, rg, cldata)
+// Get connstring + priority of current master
+func GetSuConnstrWithPriority(ctx context.Context, cs *cluster.ClusterStore, rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, int, error) {
+	cp, priority, err := cs.GetSuConnstrMap(ctx, rg, cldata)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return ConnString(cp), nil
+	return ConnString(cp), priority, nil
+}
+
+// just su connstring
+func GetSuConnstr(ctx context.Context, cs *cluster.ClusterStore, rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, error) {
+	connstr, _, err := GetSuConnstrWithPriority(ctx, cs, rg, cldata)
+	return connstr, err
 }
 
 // ConnString returns a connection string, its entries are sorted so the

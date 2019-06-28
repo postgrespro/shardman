@@ -64,12 +64,25 @@ func NewStolonStoreFromExisting(rg *RepGroup, store store.EtcdV3Store) *StolonSt
 
 // Copy needed fragments from Stolon...
 // Copyright 2015 Sorint.lab under Apache License, Version 2.0 (in licenses/apache-2.0)
+type Keepers map[string]*Keeper
 type StolonClusterData struct {
-	DBs   map[string]*DB `json:"dbs"`
-	Proxy *Proxy         `json:"proxy"`
+	Keepers Keepers        `json:"keepers"`
+	DBs     map[string]*DB `json:"dbs"`
+	Proxy   *Proxy         `json:"proxy"`
+}
+type Keeper struct {
+	Status KeeperStatus `json:"status,omitempty"`
+}
+type KeeperStatus struct {
+	Priority int `json:"priority,omitempty"`
 }
 type DB struct {
+	Spec   *DBSpec  `json:"spec,omitempty"`
 	Status DBStatus `json:"status,omitempty"`
+}
+type DBSpec struct {
+	// The KeeperUID this db is assigned to
+	KeeperUID string `json:"keeperUID,omitempty"`
 }
 type DBStatus struct {
 	ListenAddress string `json:"listenAddress,omitempty"`
@@ -84,8 +97,9 @@ type ProxySpec struct {
 
 // Master connection info
 type Endpoint struct {
-	Address string
-	Port    string
+	Address  string
+	Port     string
+	Priority int
 }
 
 func (ss *StolonStore) GetClusterData(ctx context.Context) (*StolonClusterData, error) {
@@ -119,6 +133,7 @@ func (ss *StolonStore) GetMaster(ctx context.Context) (*Endpoint, error) {
 	if db, ok := clusterData.DBs[clusterData.Proxy.Spec.MasterDBUID]; ok {
 		master.Address = db.Status.ListenAddress
 		master.Port = db.Status.Port
+		master.Priority = clusterData.Keepers[db.Spec.KeeperUID].Status.Priority
 		return master, nil
 	} else {
 		return nil, nil

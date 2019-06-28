@@ -364,19 +364,24 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 			}
 
 			var conn *pgx.Conn = nil
-			var gotConnectionTimes = 0
 			for {
 				var err error
 				var connstr string
+				var priority int
 				var connconfig pgx.ConnConfig
 				var inRecovery bool
 
-				connstr, err = pg.GetSuConnstr(ctx, ls.ClusterStore, &rg, cldata)
+				connstr, priority, err = pg.GetSuConnstrWithPriority(ctx, ls.ClusterStore, &rg, cldata)
 				if err != nil {
 					if _, ok := err.(cluster.MasterUnavailableError); ok {
 						goto notAvailableYet
 					}
 					return fmt.Errorf("failed to check connstring of new rg: %v", err)
+				}
+
+				if priority != 1 {
+					err = fmt.Errorf("Found master has wrong priority 0")
+					goto notAvailableYet
 				}
 
 				connconfig, err = pgx.ParseConnectionString(connstr)
@@ -395,20 +400,6 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 					goto notAvailableYet
 				}
 
-				// Successfully found master. However,
-				// immediately after cluster init master often
-				// changes due to priorities. To ensure it is
-				// stable, loop a bit more. Obviously this is
-				// unreliable, but fixrepgroups can fix it
-				// anyway...
-				// An alternative would be to make sure priority
-				// of found master is not 0 (which is also kinda unreliable
-				// if nodes fail).
-				gotConnectionTimes = gotConnectionTimes + 1
-				if gotConnectionTimes < 4 {
-					goto notAvailableYet
-				}
-
 				// done
 				conn.Close()
 				break
@@ -417,12 +408,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 					conn.Close()
 					conn = nil
 				}
-				if err == nil {
-					err = fmt.Errorf("making sure master with connstr %v is stable", connstr)
-				} else {
-					err = fmt.Errorf("err: %v", err)
-				}
-				hl.Infof("Waiting for keepers/proxies of rg %s to start... %v", rgName, err)
+				hl.Infof("Waiting for keepers/proxies of rg %s to start... err: %v", rgName, err)
 				time.Sleep(1 * time.Second)
 			}
 		}
