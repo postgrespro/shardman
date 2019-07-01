@@ -70,11 +70,11 @@ type StolonClusterData struct {
 	DBs     map[string]*DB `json:"dbs"`
 	Proxy   *Proxy         `json:"proxy"`
 }
-type Keeper struct {
-	Status KeeperStatus `json:"status,omitempty"`
-}
-type KeeperStatus struct {
+type KeeperSpec struct {
 	Priority int `json:"priority,omitempty"`
+}
+type Keeper struct {
+	Spec KeeperSpec `json:"status,omitempty"`
 }
 type DB struct {
 	Spec   *DBSpec  `json:"spec,omitempty"`
@@ -133,7 +133,7 @@ func (ss *StolonStore) GetMaster(ctx context.Context) (*Endpoint, error) {
 	if db, ok := clusterData.DBs[clusterData.Proxy.Spec.MasterDBUID]; ok {
 		master.Address = db.Status.ListenAddress
 		master.Port = db.Status.Port
-		master.Priority = clusterData.Keepers[db.Spec.KeeperUID].Status.Priority
+		master.Priority = clusterData.Keepers[db.Spec.KeeperUID].Spec.Priority
 		return master, nil
 	} else {
 		return nil, nil
