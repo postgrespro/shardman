@@ -31,8 +31,7 @@ etcd_client_port: 2379
 stolon_repo: https://github.com/postgrespro/stolon.git
 # stolon_version_tag: master
 # stolon_version_tag: 25c0fce06fc37d02eb5
-# keeper-priority
-stolon_version_tag: a3b812a8dea2f69d3be3
+stolon_version_tag: keeper_priority
 stolon_src: "{{ ansible_env.HOME }}/stolon"
 
 # download postgres (with core modifications) from repo or from local dir
