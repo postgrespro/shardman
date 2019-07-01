@@ -74,7 +74,7 @@ type KeeperSpec struct {
 	Priority int `json:"priority,omitempty"`
 }
 type Keeper struct {
-	Spec KeeperSpec `json:"status,omitempty"`
+	Spec KeeperSpec `json:"spec,omitempty"`
 }
 type DB struct {
 	Spec   *DBSpec  `json:"spec,omitempty"`
