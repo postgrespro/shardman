@@ -65,10 +65,11 @@ type LadleSpec struct {
 	// starting from which port to assign ports to keepers
 	KeepersInitialPort int
 
+	// starting from which port to assign ports to proxies
+	ProxiesInitialPort int
+
 	// how many instances of shardman-monitor to run
 	MonitorsNum *int
-
-	ProxyPort int
 }
 
 type NodeLayout struct {
@@ -76,10 +77,7 @@ type NodeLayout struct {
 	Keepers []Keeper
 	// monitor assigned to this node?
 	Monitor bool
-	// For simplicity and due to common sense we always put *single* proxy
-	// to each node belonging to rg with 'preferred' keeper on this node
-	// (this is a ptr as we might once decide to go without proxies)
-	Proxy *Proxy
+	Proxies []Proxy
 }
 
 type Keeper struct {
@@ -180,8 +178,8 @@ func adjustSpecDefaults(spec *LadleSpec, clusterStoreConnInfo *cluster.StoreConn
 		defaultMonitorsNum := 2
 		spec.MonitorsNum = &defaultMonitorsNum
 	}
-	if spec.ProxyPort == 0 {
-		spec.ProxyPort = 5432
+	if spec.ProxiesInitialPort == 0 {
+		spec.ProxiesInitialPort = 5432
 	}
 }
 
@@ -273,7 +271,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 		ldata.Layout[node] = &NodeLayout{
 			Keepers: make([]Keeper, 0),
 			Monitor: false,
-			Proxy:   nil,
+			Proxies: make([]Proxy, 0),
 		}
 	}
 
@@ -295,7 +293,8 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 		ldata.Clovers[newCloverId] = newClover
 		newCloverIds = append(newCloverIds, newCloverId)
 
-		// configure nCopies repgroups; each clover member must be master of some repgroup
+		// configure nCopies repgroups in each clover; each clover member
+		// must be master of some repgroup
 		for j := 0; j < nCopies; j++ {
 			master := newClover[j]
 			rgName := fmt.Sprintf("clover-%d-%s", newCloverId, master)
@@ -313,18 +312,30 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 					Preferred: false,
 					PgPort:    issueKeeperPort(ldata.Layout[node], ldata),
 				}
-				// make master actually master and put proxy on it
+				// make master actually master
 				if node == master {
 					keeper.Preferred = true
-					if cldata.Spec.UseProxy {
-						ldata.Layout[node].Proxy = &Proxy{
-							RepGroup: rgName,
-							Port:     ldata.Spec.ProxyPort,
-						}
-					}
+
 				}
+
+				// And also put a proxy near each keeper, if we
+				// proxies are enabled. This is needed basically
+				// for the same reasons as multiple sentinels:
+				// it ensures we have at least one live proxy
+				// whenever there is a healthy keeper.
+				// Proxy uses port with the same
+				// offset as of corresponding keeper.
+				if cldata.Spec.UseProxy {
+					proxy := Proxy{
+						RepGroup: rgName,
+						Port:     keeper.PgPort - ldata.Spec.KeepersInitialPort + ldata.Spec.ProxiesInitialPort,
+					}
+					ldata.Layout[node].Proxies = append(ldata.Layout[node].Proxies, proxy)
+				}
+
 				// push the keeper
 				ldata.Layout[node].Keepers = append(ldata.Layout[node].Keepers, keeper)
+				// a sentinel is assumed implicitly
 			}
 
 			// actually create stolon instance
@@ -351,7 +362,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 
 	// now, before actually adding repgroups, we must wait until keepers get
 	// up and running, which takes quite a bit of time
-	hl.Infof("Waiting for keepers/proxies to start... make sure bowl daemons are running on the nodes")
+	hl.Infof("Waiting for Stolon daemons to start... make sure bowl daemons are running on the nodes")
 	for _, cloverId := range newCloverIds {
 		clover := ldata.Clovers[cloverId]
 		for _, master := range clover {
@@ -408,7 +419,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 					conn.Close()
 					conn = nil
 				}
-				hl.Infof("Waiting for keepers/proxies of rg %s to start... err: %v", rgName, err)
+				hl.Infof("Waiting for Stolon daemons of rg %s to start... err: %v", rgName, err)
 				time.Sleep(1 * time.Second)
 			}
 		}

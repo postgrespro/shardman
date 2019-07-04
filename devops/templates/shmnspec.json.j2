@@ -1,22 +1,37 @@
 {
-    "LadleSpec": {
-	"DataDir": "{{ data_dir }}",
-	"StolonBinPath": "{{ stolon_src }}/bin",
-	"PgBinPath": "{{ pg_inst }}/bin",
-	"KeepersInitialPort": 5442,
-	"Repfactor": 1,
-	"MonitorsNum": 2
-    },
-    "ClusterSpec": {
-	"PgSuAuthMethod": "trust",
-	"PgSuUsername": "{{ ansible_user }}",
-	"PgReplUsername": "repluser",
-	"PgReplAuthMethod": "trust",
-	"StolonSpec": {
-	  "pgHBA": [
-	    "host all {{ ansible_user }} 0.0.0.0/0 trust",
-	    "host all repluser 0.0.0.0/0 trust"
-	  ]
-	}
-    }
+   "LadleSpec":{
+      "DataDir":"{{ data_dir }}",
+      "StolonBinPath":"{{ stolon_src }}/bin",
+      "PgBinPath":"{{ pg_inst }}/bin",
+      "KeepersInitialPort": 5442,
+      "ProxiesInitialPort": 5432,
+      "Repfactor":1,
+      "MonitorsNum":2
+   },
+   "ClusterSpec":{
+      "PgSuAuthMethod":"trust",
+      "PgSuUsername":"{{ ansible_user }}",
+      "PgReplUsername":"repluser",
+      "PgReplAuthMethod":"trust",
+      "UseProxy":true,
+      "StolonSpec":{
+         "pgHBA":[
+            "host all {{ ansible_user }} 0.0.0.0/0 trust",
+            "host all repluser 0.0.0.0/0 trust"
+         ],
+         "pgParameters":{
+            "log_statement":"all",
+            "log_line_prefix":"%m [%r][%p]",
+            "log_min_messages":"INFO",
+            "wal_level":"logical",
+            "shared_preload_libraries":"shardman",
+            "max_prepared_transactions":"200",
+            "default_transaction_isolation":"repeatable read",
+            "track_global_snapshots":"on",
+            "global_snapshot_defer_time":"20",
+            "postgres_fdw.use_global_snapshots":"on",
+            "postgres_fdw.use_repeatable_read":"on"
+         }
+      }
+   }
 }

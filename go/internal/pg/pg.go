@@ -304,7 +304,9 @@ func GetSuConnstrs(ctx context.Context, cs *cluster.ClusterStore) (map[int]strin
 
 // Get connstring + priority of current master
 func GetSuConnstrWithPriority(ctx context.Context, cs *cluster.ClusterStore, rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, int, error) {
-	cp, priority, err := cs.GetSuConnstrMap(ctx, rg, cldata)
+	// always fetch single endpoint, because the only callers are Go code,
+	// and pgx doesn't support multiple hosts.
+	cp, priority, err := cs.GetSuConnstrMap(ctx, rg, cldata, true)
 	if err != nil {
 		return "", 0, err
 	}
@@ -313,6 +315,8 @@ func GetSuConnstrWithPriority(ctx context.Context, cs *cluster.ClusterStore, rg 
 
 // just su connstring
 func GetSuConnstr(ctx context.Context, cs *cluster.ClusterStore, rg *cluster.RepGroup, cldata *cluster.ClusterData) (string, error) {
+	// always fetch single endpoint, because the only callers are Go code,
+	// and pgx doesn't support multiple hosts.
 	connstr, _, err := GetSuConnstrWithPriority(ctx, cs, rg, cldata)
 	return connstr, err
 }
@@ -390,6 +394,8 @@ func QL(lit string) string {
 func P(relname string, pnum int) string {
 	return fmt.Sprintf("%s_%d", relname, pnum)
 }
+
+// "I" is identifier, "L" is literal
 func PI(relname string, pnum int) string {
 	return QI(P(relname, pnum))
 }
