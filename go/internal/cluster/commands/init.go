@@ -13,19 +13,19 @@ import (
 
 // scribbles directly on input
 func adjustSpecDefaults(spec *cluster.ClusterSpec) {
-	if spec.PgReplAuthMethod == "" {
-		spec.PgReplAuthMethod = "trust"
-	}
-	if spec.PgReplUsername == "" {
-		spec.PgReplUsername = "repluser"
-	}
-
 	if spec.PgSuAuthMethod == "" {
 		spec.PgSuAuthMethod = "trust"
 	}
 	if spec.PgSuUsername == "" {
 		u, _ := user.Current()
 		spec.PgSuUsername = u.Username
+	}
+
+	if spec.PgReplAuthMethod == "" {
+		spec.PgReplAuthMethod = "trust"
+	}
+	if spec.PgReplUsername == "" {
+		spec.PgReplUsername = "repluser"
 	}
 
 	// Other choices doesn't make sense at least for now
@@ -48,12 +48,18 @@ func adjustSpecDefaults(spec *cluster.ClusterSpec) {
 		spec.StolonSpec.PGParameters = make(map[string]string)
 	}
 	pgConfDefaults := map[string]string{
-		"log_statement":             "all",
-		"log_line_prefix":           "%m [%r][%p]",
-		"log_min_messages":          "INFO",
-		"max_prepared_transactions": "100",
-		"wal_level":                 "logical", // rebalance
-		"shared_preload_libraries":  "shardman",
+		"log_statement":            "all",
+		"log_line_prefix":          "%m [%r][%p]",
+		"log_min_messages":         "INFO",
+		"wal_level":                "logical", // rebalance
+		"shared_preload_libraries": "shardman",
+		// global snapshots
+		"max_prepared_transactions":         "200",
+		"default_transaction_isolation":     "repeatable read",
+		"track_global_snapshots":            "on",
+		"global_snapshot_defer_time":        "20",
+		"postgres_fdw.use_global_snapshots": "on",
+		"postgres_fdw.use_repeatable_read":  "on",
 	}
 	// impose given config over our defaults
 	pgConfGiven := spec.StolonSpec.PGParameters

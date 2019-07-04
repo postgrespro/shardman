@@ -198,9 +198,17 @@ func (mue MasterUnavailableError) Error() string {
 	return "no masters found"
 }
 
+func (cs *ClusterStore) GetSuConnstrMap(ctx context.Context, rg *RepGroup, cldata *ClusterData, singleEP bool) (map[string]string, int, error) {
+	return cs.GetSuConnstrMapExtended(ctx, rg, cldata, false, singleEP)
+}
+
 // Get current connstr for this rg as map of libpq options + priority of current master
 // if no master available, returns MasterUnavailableError
-func (cs *ClusterStore) GetSuConnstrMap(ctx context.Context, rg *RepGroup, cldata *ClusterData) (map[string]string, int, error) {
+// if directMaster is true, addresses of actual masters are always retrieved; otherwise,
+// proxy addresses are returned if UseProxy is true.
+// if singleEP is true, only one endpoint is returned even if multiple proxies are
+// available
+func (cs *ClusterStore) GetSuConnstrMapExtended(ctx context.Context, rg *RepGroup, cldata *ClusterData, directMaster bool, singleEP bool) (map[string]string, int, error) {
 	// if this rg has separate store, connect to it
 	var ss *StolonStore
 	if rg.StoreConnInfo.Endpoints != "" {
@@ -217,10 +225,10 @@ func (cs *ClusterStore) GetSuConnstrMap(ctx context.Context, rg *RepGroup, cldat
 
 	var err error
 	var ep *Endpoint
-	if cldata.Spec.UseProxy {
-		ep, err = ss.GetProxy(ctx)
-	} else {
+	if directMaster || !cldata.Spec.UseProxy {
 		ep, err = ss.GetMaster(ctx)
+	} else {
+		ep, err = ss.GetProxy(ctx, singleEP)
 	}
 	if err != nil {
 		return nil, 0, err

@@ -430,8 +430,8 @@ func getSpecUnits(ld *ladle.LadleData, l *ladle.NodeLayout, cd *cluster.ClusterD
 		}
 	}
 
-	if l.Proxy != nil {
-		id := l.Proxy.RepGroup
+	for _, p := range l.Proxies {
+		id := p.RepGroup
 		unitName := formTemplateUnitName("proxy", id)
 		unit := unit{name: unitName}
 
@@ -443,10 +443,9 @@ func getSpecUnits(ld *ladle.LadleData, l *ladle.NodeLayout, cd *cluster.ClusterD
 		addStoreOpts(env, prefix, ld.Spec.StoreConnInfo, id)
 		// xxx allow listening on something else --
 		// needs to be configured for each node.
-		// Note that 0.0.0.0 (or *) here won't do, since stolon
-		// plainly copies this value in reports to store.
-		env[prefix+"LISTEN_ADDRESS"] = hostname
-		env[prefix+"PORT"] = strconv.Itoa(l.Proxy.Port)
+		env[prefix+"LISTEN_ADDRESS"] = "0.0.0.0"
+		env[prefix+"ADVERTISE_ADDRESS"] = hostname
+		env[prefix+"PORT"] = strconv.Itoa(p.Port)
 		// xxx tcp options
 
 		specUnit := specUnit{unitI: unit, env: env, envPath: envPath}

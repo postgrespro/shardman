@@ -56,7 +56,18 @@ shardman. Also, during execution of etcd role, a etcd cluster is configured
 it instantiates all needed service files, starts `shardman-bowl` daemons and
 executes `shardman-ladle`, creating cluster and adding `nodes` to it.
 
-Simple `bowl.yml` can be used for bowl daemons management, e.g. to stop
+`shardman-ladle` accepts config file specifying cluster
+configuration. `init.yml` creates it from template `shmnspec.json.j2` where
+defaults are listed. pgParameters specified in config file are imposed over
+default ones to provide suitable basic values.
+
+As a result, after running 'init.yml' multiple Postgers instances (managed by
+Stolon keepers, ports start from `KeepersInitialPort`) and multiple Stolon
+proxies (if UseProxy is true, ports start from `ProxiesInitialPort`) will run on
+each node. To get Postgresql connstring containing all entrypoints you can use
+`shardmanctl getconnstr`. Only `postgres` database can be used currently.
+
+Simple `bowl.yml` can be used for common daemons management, e.g. to stop
 everything:
 ```
 ansible-playbook -i inventory_manual/ bowl.yml -e "state=stopped"
@@ -122,7 +133,7 @@ this behaviour: when `off`, no statements are broadcasted.
 Example:
 ```
 create table pt (id serial, payload real) partition by hash(id);
-select shardman.hash_shard_table('pt', 10)
+select shardman.hash_shard_table('pt', 10);
 ```
 
 To execute a piece of SQL manually on all repgroups,
@@ -131,6 +142,19 @@ bcst_all_sql(cmd text) returns void
 ```
 can be used.
 
-
 New repgroups can be added at any time with `shardman-ladle addnodes`. Initially
 they don't hold any data; to rebalance, use `shardmanctl rebalance`.
+
+
+### Transactions
+When `track_global_snapshots` PG is set, option
+`postgres_fdw.use_global_snapshots` can be used on per-transaction basis. When
+it is `true` and transaction touches multiple replication groups, two-phase
+commit is performed for atomicity and global snapshots ensure global
+`REPEATABLE READ` visibility. Hanged PREPARED transactions are resolved
+automatically by `monitor` daemon.
+
+Global snapshots support only `REPEATABLE READ` isolation level. Also, such
+global transactions must start on all participant nodes within
+`global_snapshot_defer_time` seconds after beginning, otherwise they will be
+aborted.

@@ -184,7 +184,7 @@ func AddRepGroup(ctx context.Context, hl *shmnlog.Logger, cs *cluster.ClusterSto
 	// forbid all DDL during rg addition
 	bcst.PushAll("lock shardman.repgroups in access exclusive mode")
 	// create foreign servers to all rgs at newrg and vice versa
-	newrgconnstrmap, _, err := cs.GetSuConnstrMap(context.TODO(), newrg, cldata)
+	newrgconnstrmap, _, err := cs.GetSuConnstrMap(context.TODO(), newrg, cldata, false)
 	if err != nil {
 		return fmt.Errorf("Failed to get new rg connstr")
 	}
@@ -198,7 +198,7 @@ func AddRepGroup(ctx context.Context, hl *shmnlog.Logger, cs *cluster.ClusterSto
 		if rgid == newrgid {
 			continue
 		}
-		rgconnstrmap, _, err := cs.GetSuConnstrMap(context.TODO(), rg, cldata)
+		rgconnstrmap, _, err := cs.GetSuConnstrMap(context.TODO(), rg, cldata, false)
 		if err != nil {
 			return fmt.Errorf("Failed to get rg %s connstr", rg.StolonName)
 		}

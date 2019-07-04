@@ -118,8 +118,12 @@ type clusterState struct {
 	rgs map[int]*repGroupState
 }
 type repGroupState struct {
-	sysId      int64
+	sysId int64
+	// We need to retrieve map not finished connstr because postgres_fdw
+	// connstr can be configured only on key-value basis.
 	connstrmap map[string]string
+	// ... and connstr with single endpoint for pgx as well
+	connstrSingleEP string
 }
 
 // TODO: we should we add ctx to all pg's commands to prevent any worker
@@ -214,12 +218,23 @@ func reloadStore(state *shMonState) {
 
 	// learn connstrs
 	for rgid, rg := range rgs {
-		connstrmap, _, err := state.cs.GetSuConnstrMap(state.ctx, rg, cldata)
+		connstrmap, _, err := state.cs.GetSuConnstrMap(state.ctx, rg, cldata, false)
 		if err != nil {
 			hl.Errorf("Failed to get connstr for rgid %d: %v", rgid, err)
 			return
 		}
-		clstate.rgs[rgid] = &repGroupState{connstrmap: connstrmap, sysId: rg.SysId}
+		// pgx can't into multiple hosts, so fetch connstr with single
+		// endpoint as well
+		connstrSingleEP, err := pg.GetSuConnstr(state.ctx, state.cs, rg, cldata)
+		if err != nil {
+			hl.Errorf("Failed to get single EP connstr for rgid %d: %v", rgid, err)
+			return
+		}
+		clstate.rgs[rgid] = &repGroupState{
+			connstrmap:      connstrmap,
+			connstrSingleEP: connstrSingleEP,
+			sysId:           rg.SysId,
+		}
 	}
 
 	// Send current state to all workers. They must not scribble on it.
@@ -284,7 +299,7 @@ func monWorkerMain(ctx context.Context, rgid int, in <-chan clusterState, wg *sy
 			}
 			w.clstate = clstate
 			// if connstr changed, invalidate connection
-			newconnstr := pg.ConnString(clstate.rgs[rgid].connstrmap)
+			newconnstr := clstate.rgs[rgid].connstrSingleEP
 			if w.conn != nil && newconnstr != w.connstr {
 				w.conn.Close()
 				w.conn = nil
@@ -594,7 +609,7 @@ func xactResolverWorkerMain(ctx context.Context, rgid int, in <-chan interface{}
 	// if conn is nil, we must wait until retryConnTimer fixes that
 	xrwLog := hl.With("goroutine", "xact resolver worker", "rgid", rgid)
 	var conn *pgx.Conn = nil
-	var connstr string = pg.ConnString(clstate.rgs[rgid].connstrmap)
+	var connstr string = clstate.rgs[rgid].connstrSingleEP
 	var retryConnTimer *time.Timer = time.NewTimer(0)
 	checkPreparesTicker := time.NewTicker(checkPreparesInterval)
 	defer checkPreparesTicker.Stop()
@@ -636,7 +651,7 @@ func xactResolverWorkerMain(ctx context.Context, rgid int, in <-chan interface{}
 			}
 			switch msg := msg.(type) {
 			case clusterState:
-				newconnstr := pg.ConnString(clstate.rgs[rgid].connstrmap)
+				newconnstr := clstate.rgs[rgid].connstrSingleEP
 				// if connstr changed, invalidate connection
 				if conn != nil && newconnstr != connstr {
 					conn.Close()
@@ -929,7 +944,7 @@ func deadlockDetectorMain(ctx context.Context, clstatechan chan clusterState, wg
 
 func deadlockDetectorWorker(rgid int, in <-chan interface{}, out chan<- interface{}, clstate clusterState, wg *sync.WaitGroup) {
 	var conn *pgx.Conn = nil
-	var connstr string = pg.ConnString(clstate.rgs[rgid].connstrmap)
+	var connstr string = clstate.rgs[rgid].connstrSingleEP
 
 	for {
 		msg, ok := <-in
@@ -943,7 +958,7 @@ func deadlockDetectorWorker(rgid int, in <-chan interface{}, out chan<- interfac
 		}
 		switch msg := msg.(type) {
 		case clusterState:
-			newconnstr := pg.ConnString(msg.rgs[rgid].connstrmap)
+			newconnstr := msg.rgs[rgid].connstrSingleEP
 			// if connstr changed, invalidate connection
 			if conn != nil && newconnstr != connstr {
 				conn.Close()

@@ -88,11 +88,17 @@ type DBStatus struct {
 	ListenAddress string `json:"listenAddress,omitempty"`
 	Port          string `json:"port,omitempty"`
 }
-type Proxy struct {
-	Spec ProxySpec `json:"spec,omitempty"`
-}
 type ProxySpec struct {
 	MasterDBUID string `json:"masterDbUid,omitempty"`
+}
+type ProxyStatus struct {
+	ListenAddress string `json:"listenAddress,omitempty"`
+	Port          string `json:"port,omitempty"`
+	Generation    int64  `json:"generation,omitempty"`
+}
+type Proxy struct {
+	Spec   ProxySpec               `json:"spec,omitempty"`
+	Status map[string]*ProxyStatus `json:"status,omitempty"`
 }
 
 // Master connection info
@@ -120,6 +126,7 @@ func (ss *StolonStore) GetClusterData(ctx context.Context) (*StolonClusterData, 
 }
 
 // if no master available or there is no cluster (but store is ok), returns nil, nil
+// also fills priority
 func (ss *StolonStore) GetMaster(ctx context.Context) (*Endpoint, error) {
 	clusterData, err := ss.GetClusterData(ctx)
 	if err != nil {
@@ -141,8 +148,45 @@ func (ss *StolonStore) GetMaster(ctx context.Context) (*Endpoint, error) {
 }
 
 // if no proxy available (but store is ok) returns nil, nil
-func (ss *StolonStore) GetProxy(ctx context.Context) (*Endpoint, error) {
-	return nil, fmt.Errorf("not implemented")
+// all proxies are concatenated via ',' and returned, as in libpq connstr.
+// also fills priority
+// singleEP ~ get only one random proxy
+func (ss *StolonStore) GetProxy(ctx context.Context, singleEP bool) (*Endpoint, error) {
+	clusterData, err := ss.GetClusterData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if clusterData == nil {
+		return nil, nil
+	}
+
+	var ep = &Endpoint{}
+
+	// fill priority
+	if db, ok := clusterData.DBs[clusterData.Proxy.Spec.MasterDBUID]; ok {
+		ep.Priority = clusterData.Keepers[db.Spec.KeeperUID].Spec.Priority
+	} else {
+		return nil, nil // no master
+	}
+
+	var firstPass = true
+	for _, p := range clusterData.Proxy.Status {
+		if !firstPass {
+			ep.Address += ","
+			ep.Port += ","
+		}
+		firstPass = false
+		ep.Address += p.ListenAddress
+		ep.Port += p.Port
+
+		if singleEP {
+			break
+		}
+	}
+	if ep.Address == "" {
+		return nil, nil
+	}
+	return ep, nil
 }
 
 func (ss *StolonStore) Close() error {

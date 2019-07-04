@@ -20,8 +20,15 @@ type ClusterSpec struct {
 	PgReplAuthMethod string
 	PgReplPassword   string
 	PgReplUsername   string
-	UseProxy         bool
-	StolonSpec       StolonSpec
+	// It is here not in ladle because things not knowing about ladle at all
+	// (e.g. monitor, addrepgroup) need to get access to current master
+	// connstr, and this defines whether we use proxy or not. Thus, you can
+	// interpret it as 'whether added rgs are expected to have proxy which
+	// we will use'.
+	// Accordingly, ladle checks this and configures proxies
+	// if needed.
+	UseProxy   bool
+	StolonSpec StolonSpec
 }
 
 // Replication group ~ Stolon instance.
