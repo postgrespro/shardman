@@ -50,7 +50,7 @@ type LadleSpec struct {
 	// directly
 	StoreConnInfo *cluster.StoreConnInfo
 
-	// how many replicas we want
+	// Number of *replicas* (we have Repfactor + 1 copies of data in total)
 	Repfactor       *int
 	PlacementPolicy string
 
@@ -63,7 +63,7 @@ type LadleSpec struct {
 	// path to postgres binaries; if empty, PATH is used
 	PgBinPath string
 	// starting from which port to assign ports to keepers
-	KeepersInitialPort int
+	PGsInitialPort int
 
 	// starting from which port to assign ports to proxies
 	ProxiesInitialPort int
@@ -171,8 +171,8 @@ func adjustSpecDefaults(spec *LadleSpec, clusterStoreConnInfo *cluster.StoreConn
 		spec.Repfactor = &defaultRepfactor
 	}
 
-	if spec.KeepersInitialPort == 0 {
-		spec.KeepersInitialPort = 5442
+	if spec.PGsInitialPort == 0 {
+		spec.PGsInitialPort = 5442
 	}
 	if spec.MonitorsNum == nil {
 		defaultMonitorsNum := 2
@@ -244,7 +244,7 @@ func issueKeeperPort(nl *NodeLayout, ld *LadleData) int {
 		}
 	}
 	if max == 0 {
-		return ld.Spec.KeepersInitialPort
+		return ld.Spec.PGsInitialPort
 	} else {
 		return max + 1
 	}
@@ -295,8 +295,8 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 
 		// configure nCopies repgroups in each clover; each clover member
 		// must be master of some repgroup
-		for j := 0; j < nCopies; j++ {
-			master := newClover[j]
+		for masterIdx := 0; masterIdx < nCopies; masterIdx++ {
+			master := newClover[masterIdx]
 			rgName := fmt.Sprintf("clover-%d-%s", newCloverId, master)
 			rg := cluster.RepGroup{
 				StolonName: rgName,
@@ -305,17 +305,19 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 				StorePrefix:   "stolon/cluster",
 			}
 			// add keepers, sentinels and proxies to each node of the clover
-			for keeperUid := 0; keeperUid < nCopies; keeperUid++ {
+			for i := 0; i < nCopies; i++ {
+				// start from master to assign all masters the
+				// same initial port
+				keeperUid := (i + masterIdx) % nCopies
 				node := newClover[keeperUid]
 				keeper := Keeper{
 					Id:        KeeperId{RepGroup: rgName, Uid: keeperUid},
 					Preferred: false,
-					PgPort:    issueKeeperPort(ldata.Layout[node], ldata),
+					PgPort:    ldata.Spec.PGsInitialPort + i,
 				}
 				// make master actually master
 				if node == master {
 					keeper.Preferred = true
-
 				}
 
 				// And also put a proxy near each keeper, if we
@@ -328,7 +330,7 @@ func (ls *LadleStore) AddNodes(ctx context.Context, hl *shmnlog.Logger, nodes []
 				if cldata.Spec.UseProxy {
 					proxy := Proxy{
 						RepGroup: rgName,
-						Port:     keeper.PgPort - ldata.Spec.KeepersInitialPort + ldata.Spec.ProxiesInitialPort,
+						Port:     keeper.PgPort - ldata.Spec.PGsInitialPort + ldata.Spec.ProxiesInitialPort,
 					}
 					ldata.Layout[node].Proxies = append(ldata.Layout[node].Proxies, proxy)
 				}

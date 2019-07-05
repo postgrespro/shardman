@@ -3,7 +3,7 @@
       "DataDir":"{{ data_dir }}",
       "StolonBinPath":"{{ stolon_src }}/bin",
       "PgBinPath":"{{ pg_inst }}/bin",
-      "KeepersInitialPort": 5442,
+      "PGsInitialPort": 5442,
       "ProxiesInitialPort": 5432,
       "Repfactor":1,
       "MonitorsNum":2
@@ -15,6 +15,9 @@
       "PgReplAuthMethod":"trust",
       "UseProxy":true,
       "StolonSpec":{
+         "synchronousReplication": true,
+         "minSynchronousStandbys": 0,
+         "maxSynchronousStandbys": 1,
          "pgHBA":[
             "host all {{ ansible_user }} 0.0.0.0/0 trust",
             "host all repluser 0.0.0.0/0 trust"

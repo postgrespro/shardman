@@ -58,14 +58,35 @@ executes `shardman-ladle`, creating cluster and adding `nodes` to it.
 
 `shardman-ladle` accepts config file specifying cluster
 configuration. `init.yml` creates it from template `shmnspec.json.j2` where
-defaults are listed. pgParameters specified in config file are imposed over
-default ones to provide suitable basic values.
+defaults are listed. `StolonSpec` is handled specially: pgParameters specified
+in config file are imposed over default ones to provide suitable basic values.
+Other fields, if not specified, get default value as documented in Stolon.
 
-As a result, after running 'init.yml' multiple Postgers instances (managed by
-Stolon keepers, ports start from `KeepersInitialPort`) and multiple Stolon
+As a result, after running `init.yml` multiple Postgers instances (managed by
+Stolon keepers, PG ports start from `PGsInitialPort`) and multiple Stolon
 proxies (if UseProxy is true, ports start from `ProxiesInitialPort`) will run on
-each node. To get Postgresql connstring containing all entrypoints you can use
-`shardmanctl getconnstr`. Only `postgres` database can be used currently.
+each node. To get Postgres connection string containing all entrypoints you can
+use `shardmanctl getconnstr`. Only `postgres` database can be used currently.s
+
+Currently, the simplest strategy for daemons placements is implemented. Nodes
+are divided into subsets of `n` members each where `n` is number of copies of
+data (`Repfactor` + 1). On each such subset (called clover), `n` replication
+groups are created, and if everyone is healthy, each subset member holds
+Postgres instance who will be the master for one of those replication group
+(Stolon will always try to elect it as master if it is possible). This means
+that number of nodes being added or removed must be multiple of number of copies
+of data (e.g. 12 nodes for 3 copies, or 2 replicas).
+
+For convenience, Postgres who is the master of its replication group in the
+normal case always listens on `PGsInitialPort`. Furthermore, proxies ports have
+the same offset from `ProxiesInitialPort` as Postgres of their replication group
+from `PGsInitialPort`, so proxy for assumed master always listens on
+`ProxiesInitialPort`. Thus, you get reasonable workload distribution if you just
+connect to `ProxiesInitialPort` (5432 by default) on each node when everyone is
+healthy, which is e.g. useful for benchmarks. Generally it is better to use
+`shardmanctl getconnstr` because it contains all proxies, so all repgroups are
+reachable directly by the client (not via `postgres_fdw`).
+
 
 Simple `bowl.yml` can be used for common daemons management, e.g. to stop
 everything:
@@ -158,3 +179,7 @@ Global snapshots support only `REPEATABLE READ` isolation level. Also, such
 global transactions must start on all participant nodes within
 `global_snapshot_defer_time` seconds after beginning, otherwise they will be
 aborted.
+
+It makes sense to use `synchronousReplication` of Stolon. Otherwise, not only
+there is a chance to lose some latest transactions as in usual async
+replication, but also parts of distributed transactions might evaporate.
