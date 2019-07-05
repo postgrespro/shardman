@@ -743,13 +743,30 @@ FSExtractServerName(Oid fsid, char **host, int *port)
 		if (strcmp(def->defname, "host") == 0)
 			hostname = defGetString(def);
 		else if (strcmp(def->defname, "port") == 0)
+		{
+			/*
+			 * HACK: if there are multiple endpoints in connstr, use only the
+			 * first one.
+			 */
+			char *str = defGetString(def);
+			char *comma = strchr(str, ',');
+
+			if (comma != NULL)
+				*comma = '\0';
 			*port = strtol(defGetString(def), NULL, 10);
+		}
 	}
 
 	if (!hostname)
 		hostname = GetMyServerName(NULL);
 	else
 	{
+		/* Same HACK for hostname */
+		char *comma = strchr(hostname, ',');
+
+		if (comma != NULL)
+			*comma = '\0';
+
 		hostname = get_hostname(hostname);
 		/* Convert foreign server address to network host name. */
 	}
