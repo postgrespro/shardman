@@ -10,6 +10,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/global_snapshot.h"
 #include "catalog/namespace.h"
 #include "commands/extension.h"
 #include "executor/spi.h"
@@ -37,9 +38,12 @@ PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1(ex_sql);
 PG_FUNCTION_INFO_V1(bcst_sql);
 PG_FUNCTION_INFO_V1(bcst_all_sql);
+PG_FUNCTION_INFO_V1(generate_global_snapshot);
+PG_FUNCTION_INFO_V1(get_instr_time);
 
 /* Execute portable query plan */
 PG_FUNCTION_INFO_V1(pg_exec_plan);
+
 
 /* GUC variables */
 int MyRgid;
@@ -519,4 +523,23 @@ pg_exec_plan(PG_FUNCTION_ARGS)
 
 	exec_plan(squery, pstmt, paramLI, serverName);
 	PG_RETURN_VOID();
+}
+
+/* For debugging */
+Datum
+generate_global_snapshot(PG_FUNCTION_ARGS)
+{
+	GlobalCSN snapshot = GlobalSnapshotGenerate(false);
+
+	PG_RETURN_UINT64(snapshot);
+}
+Datum
+get_instr_time(PG_FUNCTION_ARGS)
+{
+	instr_time	current_time;
+	uint64 tm_nsec;
+
+	INSTR_TIME_SET_CURRENT(current_time);
+	tm_nsec = INSTR_TIME_GET_NANOSEC(current_time);
+	PG_RETURN_UINT64(tm_nsec);
 }

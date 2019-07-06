@@ -376,3 +376,6 @@ LANGUAGE C;
 CREATE OR REPLACE FUNCTION dmq_receiver_loop(sender_name text) RETURNS void
 AS 'MODULE_PATHNAME','dmq_receiver_loop'
 LANGUAGE C;
+
+create or replace function generate_global_snapshot() returns int8 as 'MODULE_PATHNAME' language C;
+create or replace function get_instr_time() returns int8 as 'MODULE_PATHNAME' language C;
