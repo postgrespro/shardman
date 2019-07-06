@@ -1487,10 +1487,10 @@ index 0000000000..d9d66528e4
 +}
 diff --git a/src/backend/access/transam/global_snapshot.c b/src/backend/access/transam/global_snapshot.c
 new file mode 100644
-index 0000000000..dd293b25ff
+index 0000000000..076886893a
 --- /dev/null
 +++ b/src/backend/access/transam/global_snapshot.c
-@@ -0,0 +1,755 @@
+@@ -0,0 +1,754 @@
 +/*-------------------------------------------------------------------------
 + *
 + * global_snapshot.c
@@ -1862,14 +1862,14 @@ index 0000000000..dd293b25ff
 + * GlobalSnapshotGenerate
 + *
 + * Generate GlobalCSN which is actually a local time. Also we are forcing
-+ * this time to be always increasing. Since now it is not uncommon to have
-+ * millions of read transactions per second we are trying to use nanoseconds
++ * this time to be always increasing.
++ * XXX since now it is not uncommon to have
++ * millions of read transactions per second should use nanoseconds
 + * if such time resolution is available.
 + */
 +GlobalCSN
 +GlobalSnapshotGenerate(bool locked)
 +{
-+	instr_time	current_time;
 +	GlobalCSN	global_csn;
 +
 +	Assert(track_global_snapshots || global_snapshot_defer_time > 0);
@@ -1877,8 +1877,7 @@ index 0000000000..dd293b25ff
 +	/*
 +	 * TODO: create some macro that add small random shift to current time.
 +	 */
-+	INSTR_TIME_SET_CURRENT(current_time);
-+	global_csn = (GlobalCSN) INSTR_TIME_GET_NANOSEC(current_time);
++	global_csn = GetCurrentTimestamp() * 1000; /* nsec per usec */
 +
 +	/* TODO: change to atomics? */
 +	if (!locked)
