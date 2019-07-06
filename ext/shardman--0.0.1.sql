@@ -383,3 +383,6 @@ LANGUAGE C STRICT;
 CREATE FOREIGN DATA WRAPPER shardman_postgres_fdw
   HANDLER postgres_fdw_handler
   VALIDATOR postgres_fdw_validator;
+
+create or replace function generate_global_snapshot() returns int8 as 'MODULE_PATHNAME' language C;
+create or replace function get_instr_time() returns int8 as 'MODULE_PATHNAME' language C;
