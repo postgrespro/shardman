@@ -20,7 +20,7 @@ var faCmd = &cobra.Command{
 	Use:   "forall",
 	Run:   forall,
 	Short: "Execute piece of SQL on all replication groups",
-	PersistentPreRun: func(c *cobra.Command, args []string) {
+	PreRun: func(c *cobra.Command, args []string) {
 		if sql == "" {
 			hl.Fatalf("sql is required")
 		}
