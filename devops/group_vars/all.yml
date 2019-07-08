@@ -36,7 +36,7 @@ stolon_version_tag: shardman
 stolon_src: "{{ ansible_env.HOME }}/stolon"
 
 # download postgres (with core modifications) from repo or from local dir
-pg_use_repo: False
+pg_use_repo: True
 # default values assumes shardman/ is inside contrib/ of pg source tree
 pg_local_dir: "{{ playbook_dir }}/../../../"
 # pg_repo: git://git.postgresql.org/git/postgresql.git
