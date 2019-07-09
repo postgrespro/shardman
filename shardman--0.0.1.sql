@@ -368,7 +368,7 @@ begin
 end
 $$ language plpgsql strict;
 
-CREATE OR REPLACE FUNCTION pg_exec_plan(query TEXT, plan TEXT, params TEXT, serverName TEXT)
+CREATE OR REPLACE FUNCTION pg_exec_plan(query TEXT, plan TEXT, serverName TEXT)
 RETURNS BOOL AS 'MODULE_PATHNAME'
 LANGUAGE C;
 

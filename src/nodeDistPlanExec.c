@@ -47,8 +47,8 @@ char destsName[10] = "DMQ_DESTS";
 
 
 static Node *CreateDistPlanExecState(CustomScan *node);
-static char *serialize_plan(Plan *plan, const char *sourceText,
-														ParamListInfo params);
+static void serialize_plan(const Plan *plan, const char *sourceText,
+						   char **cquery, char **cplan);
 static PlannedStmt *add_pstmt_node(Plan *plan, EState *estate);
 static void BeginDistPlanExec(CustomScanState *node, EState *estate, int eflags);
 static TupleTableSlot *ExecDistPlanExec(CustomScanState *node);
@@ -99,63 +99,31 @@ CreateDistPlanExecState(CustomScan *node)
 	return (Node *) state;
 }
 
-static char*
-serialize_plan(Plan *plan, const char *sourceText, ParamListInfo params)
+static void
+serialize_plan(const Plan *plan, const char *sourceText,
+			   char **cquery, char **cplan)
 {
-	char	   *query,
-			   *query_container,
-			   *splan,
-			   *plan_container,
-			   *sparams,
-			   *start_address,
-			   *params_container;
+	char	   *splan;
 	int			qlen,
 				qlen1,
 				plen,
-				plen1,
-				rlen,
-				rlen1,
-				sparams_len;
-	char *host;
-	int port;
-	char *serverName;
+				plen1;
 
 	set_portable_output(true);
-
 	splan = nodeToString(plan);
 	set_portable_output(false);
+
 	plen = pg_b64_enc_len(strlen(splan) + 1);
-	plan_container = (char *) palloc0(plen + 1);
-	plen1 = pg_b64_encode(splan, strlen(splan), plan_container);
+	*cplan = (char *) palloc0(plen + 1);
+	plen1 = pg_b64_encode(splan, strlen(splan), *cplan);
 	Assert(plen > plen1);
 
 	qlen = pg_b64_enc_len(strlen(sourceText) + 1);
-	query_container = (char *) palloc0(qlen + 1);
-	qlen1 = pg_b64_encode(sourceText, strlen(sourceText), query_container);
+	*cquery = (char *) palloc0(qlen + 1);
+	qlen1 = pg_b64_encode(sourceText, strlen(sourceText), *cquery);
 	Assert(qlen > qlen1);
 
-	sparams_len = EstimateParamListSpace(params);
-	start_address = sparams = palloc(sparams_len);
-	SerializeParamList(params, &start_address);
-	rlen = pg_b64_enc_len(sparams_len);
-	params_container = (char *) palloc0(rlen + 1);
-	rlen1 = pg_b64_encode(sparams, sparams_len, params_container);
-	Assert(rlen >= rlen1);
-
-	host = GetMyServerName(&port);
-	serverName = serializeServer(host, port);
-	query = palloc0(qlen + plen + rlen + strlen(serverName) + 100);
-	sprintf(query, "SELECT shardman.pg_exec_plan('%s', '%s', '%s', '%s');",
-						query_container, plan_container, params_container,
-						serverName);
-
-	pfree(serverName);
-	pfree(query_container);
-	pfree(plan_container);
-	pfree(sparams);
-	pfree(params_container);
-
-	return query;
+	return;
 }
 
 static PlannedStmt *
@@ -256,7 +224,7 @@ EstablishDMQConnections(const lcontext *context, const char *serverName,
 			sprintf(connstr, "host=%s port=%d "
 							 "fallback_application_name=%s",
 							 host, port, senderName);
-elog(LOG, "CONN STR: %s", connstr);
+			elog(LOG, "CONN STR: %s", connstr);
 			sub->dest_id = dmq_destination_add(connstr, senderName, receiverName, 10);
 			memcpy(sub->node, receiverName, strlen(receiverName) + 1);
 		}
@@ -268,6 +236,7 @@ elog(LOG, "CONN STR: %s", connstr);
 	/* if coordinator_num == -1 - I'm the Coordinator */
 	dmq_data->coordinator_num = coordinator_num;
 	dmq_init_barrier(dmq_data, substate);
+
 	/* Add list of destinations in queryEnv */
 	if (!estate->es_queryEnv)
 		estate->es_queryEnv = create_queryEnv();
@@ -285,7 +254,7 @@ BeginDistPlanExec(CustomScanState *node, EState *estate, int eflags)
 	PlanState	*subPlanState;
 	PlannedStmt *pstmt;
 	bool		explain_only = ((eflags & EXEC_FLAG_EXPLAIN_ONLY) != 0);
-	char *query;
+	char *cquery, *cplan;
 	lcontext context;
 
 	Assert(list_length(cscan->custom_plans) == 1);
@@ -293,7 +262,8 @@ BeginDistPlanExec(CustomScanState *node, EState *estate, int eflags)
 	/* Initialize subtree */
 	subplan = linitial(cscan->custom_plans);
 	pstmt = add_pstmt_node(subplan, estate);
-	query = serialize_plan((Plan *) pstmt, estate->es_sourceText, NULL);
+
+	serialize_plan((Plan *) pstmt, estate->es_sourceText, &cquery, &cplan);
 
 	context.pstmt = pstmt;
 	context.eflags = eflags;
@@ -302,25 +272,43 @@ BeginDistPlanExec(CustomScanState *node, EState *estate, int eflags)
 	localize_plan(subplan, &context);
 
 	subPlanState = (PlanState *) ExecInitNode(subplan, estate, eflags);
+	Assert(IsExchangeStateNode(subPlanState));
 	node->custom_ps = lappend(node->custom_ps, subPlanState);
 
 	if (!explain_only)
 	{
-		int i = 0;
+		int			i = 0;
 		ListCell	*lc;
+		char		*query;
+		char		*host;
+		int			port;
+		char		*serverName;
 
 		/* The Plan involves foreign servers and uses exchange nodes. */
 		if (cscan->custom_private == NIL)
 			return;
 
-		dpe->nconns = list_length(cscan->custom_private);
+		dpe->nconns = list_length(cscan->custom_private) - 1;
 		dpe->conn = palloc(sizeof(PGconn *) * dpe->nconns);
 
+		host = GetMyServerName(&port);
+		serverName = serializeServer(host, port);
+		query = psprintf("SELECT shardman.pg_exec_plan('%s', '%s', '%s');",
+													cquery, cplan, serverName);
+
+		/*
+		 * Send query plan to each foreign server, stored at the custom_private
+		 * field.
+		 */
 		for (lc = list_head(cscan->custom_private); lc != NULL; lc = lnext(lc))
 		{
 			UserMapping	*user;
 			int			res;
-			Oid serverid = lfirst_oid(lc);
+			Oid			serverid = lfirst_oid(lc);
+
+			if (serverid == InvalidOid)
+				/* Don't send to myself. */
+				continue;
 
 			user = GetUserMapping(GetUserId(), serverid);
 			dpe->conn[i] = GetConnection(user, true);
@@ -336,6 +324,10 @@ BeginDistPlanExec(CustomScanState *node, EState *estate, int eflags)
 		Assert(bms_num_members(context.servers) > 0);
 
 		EstablishDMQConnections(&context, " ", estate, subPlanState);
+		pfree(query);
+		pfree(cquery);
+		pfree(cplan);
+		pfree(serverName);
 	}
 }
 
@@ -351,19 +343,18 @@ ExecDistPlanExec(CustomScanState *node)
 static void
 ExecEndDistPlanExec(CustomScanState *node)
 {
-	DPEState *dpe = (DPEState *) node;
-	int i;
-
-	ExecEndNode(linitial(node->custom_ps));
+	DPEState	*dpe = (DPEState *) node;
+	int			i = 0;
 
 	for (i = 0; i < dpe->nconns; i++)
 	{
 		PGresult	*result;
 
 		while ((result = PQgetResult(dpe->conn[i])) != NULL);
+		dpe->conn[i] = NULL;
 	}
-	if (dpe->conn)
-		pfree(dpe->conn);
+
+	ExecEndNode(linitial(node->custom_ps));
 }
 
 static void
@@ -464,7 +455,7 @@ make_distplanexec(List *custom_plans, List *tlist, List *private_data)
 
 CustomPath *
 create_distexec_path(PlannerInfo *root, RelOptInfo *rel, Path *children,
-					 Bitmapset *servers)
+					 const Bitmapset *servers)
 {
 	CustomPath	*path = makeNode(CustomPath);
 	Path		*pathnode = &path->path;
@@ -811,6 +802,7 @@ dmq_init_barrier(DMQDestCont *dmq_data, PlanState *child)
 	/* Wait for dmq connection establishing */
 	for (i = 0; i < dmq_data->nservers; i++)
 		while (dmq_get_destination_status(dmq_data->dests[i].dest_id) != Active);
+
 	elog(LOG, "DMQ INIT BARRIER");
 	init_exchange_channel(child, (void *) dmq_data);
 	elog(LOG, "END DMQ INIT BARRIER");
@@ -839,7 +831,7 @@ init_exchange_channel(PlanState *node, void *context)
 		return false;
 
 	css = (CustomScanState *) node;
-	if (strcmp(css->methods->CustomName, EXCHANGE_NAME) != 0)
+	if (strcmp(css->methods->CustomName, EXCHANGE_STATE_NAME) != 0)
 		return false;
 
 	/* It is EXCHANGE node */
@@ -876,7 +868,7 @@ init_exchange_channel(PlanState *node, void *context)
 	for (i = 0; i < state->nnodes; i++)
 	{
 		int j = state->indexes[i];
-
+elog(LOG, "RECV %d/%d %d", i, state->nnodes, j);
 		if (j >= 0)
 		{
 			char c;

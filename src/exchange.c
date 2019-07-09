@@ -26,7 +26,6 @@
 #include "nodes/relation.h"
 #include "nodeDistPlanExec.h"
 #include "optimizer/cost.h"
-#include "optimizer/pathnode.h"
 #include "partitioning/partbounds.h"
 #include "postgres_fdw.h"
 #include "utils/lsyscache.h"
@@ -114,10 +113,14 @@ static void EXCHANGE_InitializeWorker(CustomScanState *node,
 									  shm_toc *toc,
 									  void *coordinate);
 
-static void create_gather_dfn(EPPNode *epp, RelOptInfo *rel);
-static void create_stealth_dfn(EPPNode *epp, RelOptInfo *rel, PlannerInfo *root);
-static void create_shuffle_dfn(EPPNode *epp, RelOptInfo *rel, PlannerInfo *root);
-static void create_broadcast_dfn(EPPNode *epp, RelOptInfo *rel, PlannerInfo *root);
+static void create_gather_dfn(const Distribution dist, EPPNode *epp);
+static void create_stealth_dfn(const PlannerInfo *root, const Distribution dist,
+							   EPPNode *epp);
+static void create_shuffle_dfn(const PlannerInfo *root, const Distribution dist,
+							   EPPNode *epp);
+static void create_broadcast_dfn(const PlannerInfo *root,
+								 const Distribution dist,
+								 EPPNode *epp);
 
 
 /*
@@ -144,7 +147,7 @@ nodeOutExchangePrivate(struct StringInfoData *str,
 		appendStringInfo(str, " %u", planNode->funcid[i]);
 
 	appendStringInfoString(str, " :att_exprs ");
-	outNode(str, planNode->att_exprs);
+	outNode(str, planNode->exprs);
 
 	appendStringInfo(str, " :mode %d", planNode->mode);
 }
@@ -190,7 +193,7 @@ nodeReadExchangePrivate(struct ExtensibleNode *node)
 
 	/* att_exprs field */
 	token = pg_strtok(&length);		/* skip :fldname */
-	planNode->att_exprs = nodeRead(NULL, 0);
+	planNode->exprs = nodeRead(NULL, 0);
 
 	/* mode field */
 	token = pg_strtok(&length);		/* skip :fldname */
@@ -202,11 +205,11 @@ void
 EXCHANGE_Init_methods(void)
 {
 	/* Initialize path generator methods */
-	exchange_path_methods.CustomName = EXCHANGEPATHNAME;
+	exchange_path_methods.CustomName = EXCHANGE_PATH_NAME;
 	exchange_path_methods.PlanCustomPath = ExchangeCreateCustomPlan;
 	exchange_path_methods.ReparameterizeCustomPathByChild = NULL;
 
-	exchange_plan_methods.CustomName = EXCHANGEPLANNAME;
+	exchange_plan_methods.CustomName = EXCHANGE_PLAN_NAME;
 	exchange_plan_methods.CreateCustomScanState	= EXCHANGE_Create_state;
 	RegisterCustomScanMethods(&exchange_plan_methods);
 
@@ -219,7 +222,7 @@ EXCHANGE_Init_methods(void)
 	RegisterExtensibleNodeMethods(&exchange_plan_private);
 
 	/* setup exec methods */
-	exchange_exec_methods.CustomName				= EXCHANGE_NAME;
+	exchange_exec_methods.CustomName				= EXCHANGE_STATE_NAME;
 	exchange_exec_methods.BeginCustomScan			= EXCHANGE_Begin;
 	exchange_exec_methods.ExecCustomScan			= EXCHANGE_Execute;
 	exchange_exec_methods.EndCustomScan				= EXCHANGE_End;
@@ -254,330 +257,13 @@ accumulate_part_servers(RelOptInfo *rel)
 	return servers;
 }
 
-void
-set_exchange_altrel(ExchangeMode mode, ExchangePath *path, RelOptInfo *outerrel,
-		RelOptInfo *innerrel, List *restrictlist, Bitmapset *servers)
-{
-	int i;
-	int sid = -1;
-	RelOptInfo *rel = &path->altrel;
-
-	Assert(rel && (outerrel || innerrel));
-	Assert(!bms_is_empty(servers) || mode != EXCH_SHUFFLE);
-
-	if (!bms_is_empty(servers))
-	{
-		rel->nparts = bms_num_members(servers) + 1; /* plus local part */
-		rel->part_rels = palloc(sizeof(RelOptInfo *) * rel->nparts);
-
-		rel->part_rels[0] = palloc0(sizeof(RelOptInfo));
-		rel->part_rels[0]->serverid = InvalidOid;
-		for (i = 1; i < rel->nparts; i++)
-		{
-			sid = bms_next_member(servers, sid);
-			rel->part_rels[i] = palloc0(sizeof(RelOptInfo));
-			rel->part_rels[i]->serverid = (Oid) sid;
-		}
-	}
-
-	switch (mode)
-	{
-	case EXCH_GATHER:
-		rel->part_scheme = &ZERO_PART_SCHEME;
-		rel->boundinfo = &ZERO_BOUND_INFO;
-		rel->partexprs = NULL;
-		break;
-
-	case EXCH_BROADCAST:
-		rel->part_scheme = &BCAST_PART_SCHEME;
-		rel->boundinfo = &BCAST_BOUND_INFO;
-		rel->partexprs = NULL;
-		break;
-
-	case EXCH_STEALTH:
-		rel->part_scheme = &STEALTH_PART_SCHEME;
-		rel->boundinfo = &STEALTH_BOUND_INFO;
-		rel->partexprs = NULL;
-		break;
-	case EXCH_SHUFFLE:
-		rel->part_scheme = outerrel->part_scheme;
-		rel->boundinfo = outerrel->boundinfo;
-		rel->partexprs = outerrel->partexprs;
-		break;
-	default:
-		Assert(0);
-	}
-	path->innerrel_ptr = innerrel;
-	path->outerrel_ptr = outerrel;
-	path->mode = mode;
-}
-
-/*
- * Make scan path for foreign part as for local relation with assumptions:
- * 1. Size and statistics of foreign part is simple as local part.
- * 2. Indexes, triggers and others on foreign part is same as on local part.
- */
-static Path *
-make_local_scan_path(Path *localPath, RelOptInfo *rel,
-					 IndexOptInfo **indexinfo)
-{
-	Path *pathnode = NULL;
-
-	switch (nodeTag(localPath))
-	{
-	case T_Path:
-		Assert(localPath->pathtype == T_SeqScan);
-		pathnode = makeNode(Path);
-		memcpy(pathnode, localPath, sizeof(Path));
-		pathnode->parent = rel;
-		pathnode->pathtarget = rel->reltarget;
-		break;
-
-	case T_BitmapHeapPath:
-	{
-		BitmapHeapPath *path = makeNode(BitmapHeapPath);
-		BitmapHeapPath *ptr = (BitmapHeapPath *) localPath;
-
-		memcpy(path, localPath, sizeof(BitmapHeapPath));
-		pathnode = &path->path;
-		pathnode->parent = rel;
-		pathnode->pathtarget = rel->reltarget;
-		path->bitmapqual = make_local_scan_path(ptr->bitmapqual, rel, indexinfo);
-	}
-		break;
-
-	case T_BitmapAndPath:
-	{
-		BitmapAndPath *path = makeNode(BitmapAndPath);
-		BitmapAndPath *ptr = (BitmapAndPath *) localPath;
-		ListCell *lc;
-
-		memcpy(path, localPath, sizeof(BitmapAndPath));
-		pathnode = &path->path;
-		pathnode->parent = rel;
-		pathnode->pathtarget = rel->reltarget;
-		path->bitmapquals = NIL;
-		foreach(lc, ptr->bitmapquals)
-		{
-			Path *subpath = (Path *)lfirst(lc);
-			path->bitmapquals = lappend(path->bitmapquals,
-						make_local_scan_path(subpath, rel, indexinfo));
-		}
-	}
-		break;
-
-	case T_BitmapOrPath:
-	{
-		BitmapOrPath *path = makeNode(BitmapOrPath);
-		BitmapOrPath *ptr = (BitmapOrPath *) localPath;
-		ListCell *lc;
-
-		memcpy(path, localPath, sizeof(BitmapOrPath));
-		pathnode = &path->path;
-		pathnode->parent = rel;
-		pathnode->pathtarget = rel->reltarget;
-		path->bitmapquals = NIL;
-		foreach(lc, ptr->bitmapquals)
-		{
-			Path *subpath = (Path *)lfirst(lc);
-			path->bitmapquals = lappend(path->bitmapquals,
-						make_local_scan_path(subpath, rel, indexinfo));
-		}
-	}
-		break;
-
-	case T_IndexPath:
-	{
-		IndexPath *path = makeNode(IndexPath);
-
-		memcpy(path, localPath, sizeof(IndexPath));
-		*indexinfo = path->indexinfo;
-		pathnode = &path->path;
-		pathnode->parent = rel;
-		pathnode->pathtarget = rel->reltarget;
-	}
-		break;
-
-	default:
-		Assert(0);
-	}
-
-	return pathnode;
-}
-
-/*
- * Add one path for a base relation target:  replace all ForeignScan nodes by
- * local Scan nodes.
- * Assumptions:
- * 1. If the planner chooses this type of scan for one partition of the relation,
- * then the same type of scan must be chosen for any other partition of this
- * relation.
- * 2. Type of scan chosen for local partition of a relation will be correct and
- * optimal for any foreign partition of the same relation.
- */
-List *
-exchange_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte)
-{
-	List *distributed_pathlist = NIL;
-	ListCell *lc;
-
-	if (!rte->inh)
-	{
-		/*
-		 * Relation is not contain any partitions.
-		 * At this level we don't need to generate distributed paths for such
-		 * relation. But query can contain JOIN with partitioned relation.
-		 * May be effective to broadcast local relation to all instances to JOIN.
-		 * In this case we will try to add exchange path for this relation at
-		 * the future.
-		 */
-		return NIL;
-	}
-
-	/*
-	 * We may need exchange paths only for the partitioned relations.
-	 * In the case of scanning only one partition, planner will use FDW.
-	 *
-	 * Traverse all possible paths and search for APPEND */
-	foreach(lc, rel->pathlist)
-	{
-		Path		*path = (Path *) lfirst(lc);
-		Path		*tmpLocalScanPath = NULL;
-		AppendPath	*ap;
-		ListCell	*lc1;
-		Bitmapset	*servers = NULL;
-		List		*subpaths = NIL;
-		List		**append_paths;
-		IndexOptInfo *indexinfo = NULL;
-
-		/*
-		 * In the case of partitioned relation all paths ends up by an Append
-		 * or MergeAppend path node.
-		 */
-		switch (nodeTag(path))
-		{
-		case T_AppendPath:
-			append_paths = &((AppendPath *) path)->subpaths;
-			break;
-		case T_MergeAppendPath:
-			append_paths = &((MergeAppendPath *) path)->subpaths;
-			break;
-		default:
-			elog(FATAL, "Unexpected node type %d, pathtype %d", path->type,
-																path->pathtype);
-		}
-
-		/*
-		 * Search for the first local scan node. We assume scan nodes of all
-		 * relation partitions will have same type. It is caused by symmetry of
-		 * data placement assumption.
-		 */
-		for (lc1 = list_head(*append_paths); lc1 != NULL; lc1 = lnext(lc1))
-		{
-			Path *subpath = (Path *) lfirst(lc1);
-
-			if (subpath->pathtype == T_ForeignScan)
-				continue;
-
-			tmpLocalScanPath = subpath;
-			break;
-		}
-
-		if (!tmpLocalScanPath)
-		{
-			/*
-			 * TODO: if all partitions placed at another instances.
-			 * We do not have info about statistics and so on.
-			 */
-			elog(WARNING, "All partitions placed at another nodes. Ignore distribution planning.");
-			return NIL;
-		}
-
-		/*
-		 * Traverse all APPEND subpaths. Form new subpaths list. Collect remote
-		 * servers.
-		 */
-		foreach(lc1, *append_paths)
-		{
-			Path	*subpath = (Path *) lfirst(lc1);
-			Path	*tmpPath = NULL;
-			Oid		serverid = InvalidOid;
-
-			switch (nodeTag(subpath))
-			{
-			case T_Path:
-			case T_BitmapHeapPath:
-			case T_IndexPath:
-			case T_TidPath:
-			case T_SubqueryScanPath:
-				tmpPath = subpath;
-				serverid = InvalidOid;
-				break;
-
-			case T_ForeignPath:
-			{
-				PgFdwRelationInfo *fpinfo =
-							(PgFdwRelationInfo *) subpath->parent->fdw_private;
-
-				serverid = subpath->parent->serverid;
-				tmpPath = make_local_scan_path(tmpLocalScanPath,
-												subpath->parent, &indexinfo);
-				Assert(subpath->parent->fdw_private != NULL);
-				tmpPath->rows = fpinfo->rows;
-				tmpPath->total_cost += fpinfo->total_cost - fpinfo->startup_cost;
-			}
-				break;
-
-			default:
-				Assert(0);
-				elog(FATAL, "Unexpected path node: %d", nodeTag(subpath));
-			}
-
-			Assert(tmpLocalScanPath);
-			subpaths = lappend(subpaths, tmpPath);
-
-			if (OidIsValid(serverid) && !bms_is_member((int)serverid, servers))
-				servers = bms_add_member(servers, serverid);
-		}
-
-		if (servers == NULL)
-			/* No one foreign servers were found. */
-			return NIL;
-
-		ap = create_append_path(root, rel, subpaths, NIL,
-								PATH_REQ_OUTER(tmpLocalScanPath), 0, false,
-								((AppendPath *) path)->partitioned_rels, -1);
-		path = (Path *) create_exchange_path(root, rel, (Path *) ap, EXCH_GATHER);
-		set_exchange_altrel(EXCH_GATHER, (ExchangePath *) path, rel, NULL, NULL,
-																	servers);
-
-		/*
-		 * If scan path uses index we need to store it in the exchange node
-		 * to use in localization procedure at another instances.
-		 */
-		if (indexinfo)
-		{
-			List **private;
-
-			private = &((ExchangePath *) path)->cp.custom_private;
-			*private = lappend(*private, indexinfo);
-		}
-
-		/* Add head of distributed plan */
-		path = (Path *) create_distexec_path(root, rel, path, servers);
-
-		distributed_pathlist = lappend(distributed_pathlist, path);
-		bms_free(servers);
-	}
-	return distributed_pathlist;
-}
-
 #include "optimizer/cost.h"
 
 void
-cost_exchange(PlannerInfo *root, RelOptInfo *baserel, ExchangePath *expath)
+cost_exchange(PlannerInfo *root, RelOptInfo *rel, ExchangePath *expath)
 {
 	Path *subpath;
+	int instances;
 
 	/* Estimate baserel size as best we can with local statistics. */
 	subpath = cstmSubPath1(expath);
@@ -585,27 +271,29 @@ cost_exchange(PlannerInfo *root, RelOptInfo *baserel, ExchangePath *expath)
 	expath->cp.path.startup_cost = subpath->startup_cost;
 	expath->cp.path.total_cost = subpath->total_cost;
 
+	instances = (expath->dist) ? expath->dist->nparts : 0;
 	switch (expath->mode)
 	{
 	case EXCH_GATHER:
 		expath->cp.path.startup_cost += DEFAULT_EXCHANGE_STARTUP_COST;
 		expath->cp.path.total_cost += cpu_tuple_cost * expath->cp.path.rows;
 		break;
+
 	case EXCH_STEALTH:
 		expath->cp.path.startup_cost += 0.;
-		expath->cp.path.total_cost += cpu_tuple_cost * expath->cp.path.rows /
-														expath->altrel.nparts;
+		expath->cp.path.total_cost += 0.;
 		break;
+
 	case EXCH_BROADCAST:
 		expath->cp.path.startup_cost += DEFAULT_EXCHANGE_STARTUP_COST;
 		expath->cp.path.total_cost += cpu_tuple_cost * expath->cp.path.rows;
 		break;
+
 	case EXCH_SHUFFLE:
 	{
 		double local_rows;
 		double received_rows;
 		double send_rows;
-		int instances;
 		Path *path = &expath->cp.path;
 
 		path->startup_cost += DEFAULT_EXCHANGE_STARTUP_COST;
@@ -616,8 +304,7 @@ cost_exchange(PlannerInfo *root, RelOptInfo *baserel, ExchangePath *expath)
 		 * subtree M/N local tuples, send to network [M-M/N] tuples and same to
 		 * receive.
 		 */
-//		path->rows /= expath->altrel.nparts;
-		instances = expath->altrel.nparts;
+		Assert(instances > 0);
 		send_rows = path->rows - (path->rows/instances);
 		received_rows = send_rows;
 		local_rows = path->rows/instances;
@@ -648,7 +335,6 @@ ExchangeCreateCustomPlan(PlannerInfo *root,
 	int port;
 	char *streamName = palloc(DMQ_NAME_MAXLEN);
 	ExchangePath *path = (ExchangePath *) best_path;
-	RelOptInfo *altrel = &path->altrel;
 	EPPNode *private = (EPPNode *) newNode(sizeof(EPPNode), T_ExtensibleNode);
 
 	exchange = make_exchange(custom_plans, tlist);
@@ -658,7 +344,18 @@ ExchangeCreateCustomPlan(PlannerInfo *root,
 	host = GetMyServerName(&port);
 	sprintf(streamName, "%s-%d-%d", host, port, exchange_counter++);
 	exchange->custom_private = lappend(exchange->custom_private, makeString(streamName));
-	Assert(altrel->nparts > 0);
+
+	/*
+	 * No redistribution activities needed. Init distribution function from
+	 * relation partitioning info.
+	 * We do it for partitions and servers initialization.
+	 */
+	if (path->dist == NULL)
+	{
+		Assert(path->mode == EXCH_GATHER || path->mode == EXCH_STEALTH);
+		path->dist = InitDistribution(rel);
+	}
+	Assert(path->dist->nparts >= 0);
 
 	/*
 	 * Compute and fill private data structure. It is used connection
@@ -668,22 +365,22 @@ ExchangeCreateCustomPlan(PlannerInfo *root,
 	switch (path->mode)
 	{
 	case EXCH_GATHER:
-		create_gather_dfn(private, altrel);
+		create_gather_dfn(path->dist, private);
 		break;
 	case EXCH_STEALTH:
-		create_stealth_dfn(private, altrel, root);
+		create_stealth_dfn(root, path->dist, private);
 		break;
 	case EXCH_SHUFFLE:
-		create_shuffle_dfn(private, altrel, root);
+		create_shuffle_dfn(root, path->dist, private);
 		break;
 	case EXCH_BROADCAST:
-		create_broadcast_dfn(private, altrel, root);
+		create_broadcast_dfn(root, path->dist, private);
 		break;
 	default:
 		Assert(0);
 	}
 
-	exchange->custom_exprs = private->att_exprs;
+	exchange->custom_exprs = private->exprs;
 	exchange->custom_private = lappend(exchange->custom_private, private);
 	exchange->custom_private = list_concat(exchange->custom_private, path->cp.custom_private);
 	return &exchange->scan.plan;
@@ -694,38 +391,39 @@ ExchangeCreateCustomPlan(PlannerInfo *root,
  * RelOptInfo structure of exchange path node.
  */
 static void
-create_gather_dfn(EPPNode *epp, RelOptInfo *rel)
+create_gather_dfn(const Distribution dist, EPPNode *epp)
 {
 	char *hostname;
 	int port;
 	int partno;
+	int serverid = -1;
 
-	epp->mode = EXCH_GATHER;
+	Assert(dist != NULL);
 
 	/*
 	 * Do not create partition scheme. In the GATHER mode all tuples will
 	 * transfer to the coordinator node. None distribution computations needed.
 	 */
+	epp->mode = EXCH_GATHER;
 	epp->natts = 0;
 	epp->funcid = NULL;
-	epp->att_exprs = NIL;
+	epp->exprs = NIL;
 
-	/* nparts of altrel represents real or virtual partitions (after JOIN) */
-	epp->nnodes = rel->nparts;
+	epp->nnodes = dist->nparts;
 	epp->nodes = (NodeName *) palloc(sizeof(NodeName) * epp->nnodes);
 
-	for (partno = 0; partno < epp->nnodes; partno++)
+	partno = 0;
+	while ((serverid = bms_next_member(dist->servers, serverid)) >= 0)
 	{
-		RelOptInfo *part_rel = rel->part_rels[partno];
-
-		if (OidIsValid(part_rel->serverid))
+		if (OidIsValid(serverid))
 			/* Foreign relation */
-			FSExtractServerName(part_rel->serverid, &hostname, &port);
+			FSExtractServerName(serverid, &hostname, &port);
 		else
 			hostname = GetMyServerName(&port);
 
-		createNodeName(epp->nodes[partno], hostname, port);
+		createNodeName(epp->nodes[partno++], hostname, port);
 	}
+	Assert(partno == epp->nnodes);
 }
 
 /*
@@ -733,116 +431,118 @@ create_gather_dfn(EPPNode *epp, RelOptInfo *rel)
  * RelOptInfo relation partitioning. In this case all tuples will go up.
  */
 static void
-create_stealth_dfn(EPPNode *epp, RelOptInfo *rel, PlannerInfo *root)
+create_stealth_dfn(const PlannerInfo *root, const Distribution dist, EPPNode *epp)
 {
 	int partno;
 	char *hostname;
 	int port;
-
-	epp->mode = EXCH_STEALTH;
+	int serverid = -1;
 
 	/*
 	 * Do not create partition scheme. In the STEALTH mode all tuples will
 	 * transfer up to next node. None distribution computations needed.
 	 */
+	epp->mode = EXCH_STEALTH;
 	epp->natts = 0;
 	epp->funcid = NULL;
-	epp->att_exprs = NIL;
+	epp->exprs = NIL;
 
 	/* nparts of altrel represents real or virtual partitions (after JOIN) */
-	epp->nnodes = rel->nparts;
+	epp->nnodes = dist->nparts;
 	epp->nodes = (NodeName *) palloc(sizeof(NodeName) * epp->nnodes);
 
-	for (partno = 0; partno < epp->nnodes; partno++)
+	partno = 0;
+	while ((serverid = bms_next_member(dist->servers, serverid)) >= 0)
 	{
-		RelOptInfo *part_rel = rel->part_rels[partno];
-
-		if (OidIsValid(part_rel->serverid))
+		if (OidIsValid(serverid))
 			/* Foreign relation */
-			FSExtractServerName(part_rel->serverid, &hostname, &port);
+			FSExtractServerName(serverid, &hostname, &port);
 		else
 			hostname = GetMyServerName(&port);
 
-		createNodeName(epp->nodes[partno], hostname, port);
+		createNodeName(epp->nodes[partno++], hostname, port);
 	}
+	Assert(partno == epp->nnodes);
 }
 
 static void
-create_shuffle_dfn(EPPNode *epp, RelOptInfo *rel, PlannerInfo *root)
+create_shuffle_dfn(const PlannerInfo *root, const Distribution dist, EPPNode *epp)
 {
 	int partno;
 	int attno;
 	char *hostname;
 	int port;
+	int serverid = -1;
 
-	Assert(rel->part_scheme->strategy == PARTITION_STRATEGY_HASH);
+	Assert(dist != NULL);
+	Assert(dist->nparts == bms_num_members(dist->servers));
+	Assert(dist->part_scheme->strategy == PARTITION_STRATEGY_HASH);
 
 	epp->mode = EXCH_SHUFFLE;
-	epp->nnodes = rel->nparts;
-
+	epp->nnodes = dist->nparts;
 	epp->nodes = (NodeName *) palloc(sizeof(NodeName) * epp->nnodes);
 
-	for (partno = 0; partno < epp->nnodes; partno++)
+	partno = 0;
+	while ((serverid = bms_next_member(dist->servers, serverid)) >= 0)
 	{
-		RelOptInfo *part_rel = rel->part_rels[partno];
-
-		if (OidIsValid(part_rel->serverid))
+		if (OidIsValid(serverid))
 			/* Foreign relation */
-			FSExtractServerName(part_rel->serverid, &hostname, &port);
+			FSExtractServerName(serverid, &hostname, &port);
 		else
 			hostname = GetMyServerName(&port);
 
-		createNodeName(epp->nodes[partno], hostname, port);
+		createNodeName(epp->nodes[partno++], hostname, port);
 	}
+	Assert(partno == epp->nnodes);
 
-	epp->natts = rel->part_scheme->partnatts;
+	epp->natts = dist->part_scheme->partnatts;
 	epp->funcid = (Oid *) palloc(sizeof(Oid) * epp->natts);
 	for (attno = 0; attno < epp->natts; attno++)
 	{
 		Oid funcid;
 
-		funcid = get_opfamily_proc(rel->part_scheme->partopfamily[attno],
-								   rel->part_scheme->partopcintype[attno],
-								   rel->part_scheme->partopcintype[attno],
+		funcid = get_opfamily_proc(dist->part_scheme->partopfamily[attno],
+								   dist->part_scheme->partopcintype[attno],
+								   dist->part_scheme->partopcintype[attno],
 								   HASHEXTENDED_PROC);
 		epp->funcid[attno] = funcid;
-		epp->att_exprs = lappend(epp->att_exprs, linitial(rel->partexprs[attno]));
+		epp->exprs = lappend(epp->exprs, linitial(dist->partexprs[attno]));
 	}
 }
 
 static void
-create_broadcast_dfn(EPPNode *epp, RelOptInfo *rel, PlannerInfo *root)
+create_broadcast_dfn(const PlannerInfo *root, const Distribution dist, EPPNode *epp)
 {
 	int partno;
 	char *hostname;
 	int port;
-
-	epp->mode = EXCH_BROADCAST;
+	int serverid = -1;
 
 	/*
 	 * Do not create partition scheme. In the STEALTH mode all tuples will
 	 * transfer up to next node. None distribution computations needed.
 	 */
+	epp->mode = EXCH_BROADCAST;
 	epp->natts = 0;
 	epp->funcid = NULL;
-	epp->att_exprs = NIL;
+	epp->exprs = NIL;
 
 	/* nparts of altrel represents real or virtual partitions (after JOIN) */
-	epp->nnodes = rel->nparts;
+	epp->nnodes = dist->nparts;
 	epp->nodes = (NodeName *) palloc(sizeof(NodeName) * epp->nnodes);
 
-	for (partno = 0; partno < epp->nnodes; partno++)
+	partno = 0;
+	while ((serverid = bms_next_member(dist->servers, serverid)) >= 0)
 	{
-		RelOptInfo *part_rel = rel->part_rels[partno];
-
-		if (OidIsValid(part_rel->serverid))
+		if (OidIsValid(serverid))
 			/* Foreign relation */
-			FSExtractServerName(part_rel->serverid, &hostname, &port);
+			FSExtractServerName(serverid, &hostname, &port);
 		else
 			hostname = GetMyServerName(&port);
 
-		createNodeName(epp->nodes[partno], hostname, port);
+		createNodeName(epp->nodes[partno++], hostname, port);
 	}
+	Assert(partno == epp->nnodes);
 }
 
 /*
@@ -852,7 +552,7 @@ create_broadcast_dfn(EPPNode *epp, RelOptInfo *rel, PlannerInfo *root)
  */
 ExchangePath *
 create_exchange_path(PlannerInfo *root, RelOptInfo *rel, Path *children,
-		ExchangeMode mode)
+		ExchangeMode mode, Distribution dist)
 {
 	ExchangePath *epath = (ExchangePath *) newNode(sizeof(ExchangePath), T_CustomPath);
 	CustomPath *path = &epath->cp;
@@ -873,8 +573,7 @@ create_exchange_path(PlannerInfo *root, RelOptInfo *rel, Path *children,
 	path->custom_private = NIL;
 	path->methods = &exchange_path_methods;
 
-	memcpy(&epath->altrel, rel, sizeof(RelOptInfo));
-	epath->exchange_counter = exchange_counter++;
+	epath->dist = dist;
 	epath->mode = mode;
 	cost_exchange(root, rel, epath); /* Change at next step*/
 
@@ -972,8 +671,8 @@ EXCHANGE_Create_state(CustomScan *node)
 	ExchangeState	*state;
 	ListCell		*lc;
 	List			*private_data;
-	int16 partno;
-	EPPNode *epp;
+	int16			partno;
+	EPPNode			*epp;
 
 	state = (ExchangeState *) palloc0(sizeof(ExchangeState));
 	NodeSetTag(state, T_CustomScanState);
@@ -1105,10 +804,10 @@ EXCHANGE_Execute(CustomScanState *node)
 				return node->ss.ss_ScanTupleSlot;
 			case 1:
 				state->activeRemotes--;
-//				elog(LOG, "[%s %d] GOT NULL. activeRemotes: %d, lt=%d, rt=%d hasLocal=%hhu st=%d",
-//						state->stream, state->mode, state->activeRemotes,
-//						state->ltuples,
-//						state->rtuples, state->hasLocal, state->stuples);
+				elog(LOG, "[%s %d] GOT NULL. activeRemotes: %d, lt=%d, rt=%d hasLocal=%hhu st=%d",
+						state->stream, state->mode, state->activeRemotes,
+						state->ltuples,
+						state->rtuples, state->hasLocal, state->stuples);
 				break;
 			default:
 				/* Any system message */
@@ -1123,9 +822,9 @@ EXCHANGE_Execute(CustomScanState *node)
 
 			if (TupIsNull(slot))
 			{
-//				elog(LOG, "[%s] FINISH Local store: l=%d, r=%d s=%d, activeRemotes=%d",
-//						state->stream, state->ltuples,
-//						state->rtuples, state->stuples, state->activeRemotes);
+				elog(LOG, "[%s] FINISH Local store: l=%d, r=%d s=%d, activeRemotes=%d",
+						state->stream, state->ltuples,
+						state->rtuples, state->stuples, state->activeRemotes);
 				if (state->mode != EXCH_STEALTH)
 				{
 					int i;
@@ -1143,8 +842,8 @@ EXCHANGE_Execute(CustomScanState *node)
 
 		if ((state->activeRemotes == 0) && (!state->hasLocal))
 		{
-//			elog(LOG, "[%s] Exchange returns NULL. Tuples: local=%d, remote=%d, send=%d",
-//					state->stream, state->ltuples, state->rtuples, state->stuples);
+			elog(LOG, "[%s] Exchange returns NULL. Tuples: local=%d, remote=%d, send=%d",
+					state->stream, state->ltuples, state->rtuples, state->stuples);
 			return NULL;
 		}
 
@@ -1253,7 +952,7 @@ EXCHANGE_Explain(CustomScanState *node, List *ancestors, ExplainState *es)
 	}
 
 	appendStringInfo(&str, "mode: %s, stream: %s. ", mode, state->stream);
-//	appendStringInfo(&str, "qual: %s.", nodeToString(state->partexprs));
+
 	ExplainPropertyText("Exchange", str.data, es);
 }
 

@@ -7,7 +7,7 @@ DATA = $(EXTENSION)--$(EXTVERSION).sql
 REGRESS = shardman_installation
 
 MODULE_big = shardman
-OBJS =	src/common.o src/dmq.o src/exchange.o src/expath.o src/hooks.o \
+OBJS =	src/common.o src/dmq.o src/exchange.o src/distpaths.o src/expath.o src/hooks.o \
 		src/meta.o src/nodeDistPlanExec.o src/nodeDummyscan.o src/partutils.o \
 		src/planpass.o src/sbuf.o src/shardman.o src/stream.o $(WIN32RES)
 PGFILEDESC = "Shardman extension"

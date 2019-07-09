@@ -158,8 +158,8 @@ RecvIfAny(void)
 				RecvBuf *buf = palloc(sizeof(RecvBuf));
 
 				buf->sid = sender_id;
-				buf->ptr = palloc(SDP_Size(msg));
-				memcpy(buf->ptr, msg, SDP_Size(msg));
+				buf->ptr = palloc(len);
+				memcpy(buf->ptr, msg, len);
 				istream->deliveries = lappend(istream->deliveries, buf);
 			}
 			else if (msg->datalen == 1)
@@ -171,6 +171,10 @@ RecvIfAny(void)
 				buf->sid = sender_id;
 				buf->ptr = palloc(size);
 				memcpy(buf->ptr, (char *) msg, size);
+				elog(LOG, "Got sys msg sender_id=%d, msg->index=%u, cur inde=%lu buf->ptr->index=%u",
+						sender_id, msg->index, istream->indexes[sender_id], buf->ptr->index);
+
+
 				istream->msgs = lappend(istream->msgs, buf);
 				istream->indexes[sender_id] = buf->ptr->index;
 			}
@@ -185,6 +189,7 @@ RecvIfAny(void)
 				SDP_PrepareToRead(msg);
 				while (!SDP_IsEmpty(msg))
 					tuplestore_puttuple(istream->RecvStore, SDP_Get_tuple(msg));
+				elog(LOG, "tuplestore %d", msg->index);
 				istream->indexes[sender_id] = msg->index;
 			}
 		}
@@ -426,8 +431,10 @@ RecvByteMessage(const char *streamName, const char *sender)
 
 			istream->msgs = list_delete_ptr(istream->msgs, buf);
 			Assert(!IsSDPBuf(buf->ptr));
+			elog(LOG, "RECV BYTE message %c recv index=%u, sid=%d", tag, buf->ptr->index, buf->sid);
 			pfree(buf);
 			MemoryContextSwitchTo(OldMemoryContext);
+
 			return tag;
 		}
 	}

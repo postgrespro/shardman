@@ -114,3 +114,117 @@ plan_tree_walker(Plan *plan, bool (*walker) (), void *context)
 
 	return false;
 }
+
+static bool
+path_walk_members(List *paths, bool (*walker) (), void *context)
+{
+	ListCell *lc;
+
+	foreach (lc, paths)
+	{
+		Path *path = lfirst(lc);
+		if (walker(path, context))
+			return true;
+	}
+
+	return false;
+}
+
+bool
+path_walker(Path *path, bool (*walker) (), void *context)
+{
+	Path	*subpath = NULL;
+	List	*subpaths = NIL;
+
+	switch (nodeTag(path))
+	{
+		/*
+		 * Extract single sub path.
+		 */
+		case T_SubqueryScanPath:
+			subpath = ((SubqueryScanPath *) path)->subpath;
+			break;
+		case T_MaterialPath:
+			subpath = ((MaterialPath *) path)->subpath;
+			break;
+		case T_UniquePath:
+			subpath = ((UniquePath *) path)->subpath;
+			break;
+		case T_GatherPath:
+			subpath = ((GatherPath *) path)->subpath;
+			break;
+		case T_GatherMergePath:
+			subpath = ((GatherMergePath *) path)->subpath;
+			break;
+		case T_ProjectionPath:
+			subpath = ((ProjectionPath *) path)->subpath;
+			break;
+		case T_ProjectSetPath:
+			subpath = ((ProjectSetPath *) path)->subpath;
+			break;
+		case T_SortPath:
+			subpath = ((SortPath *) path)->subpath;
+			break;
+		case T_GroupPath:
+			subpath = ((GroupPath *) path)->subpath;
+			break;
+		case T_UpperUniquePath:
+			subpath = ((UpperUniquePath *) path)->subpath;
+			break;
+		case T_AggPath:
+			subpath = ((AggPath *) path)->subpath;
+			break;
+		case T_GroupingSetsPath:
+			subpath = ((GroupingSetsPath *) path)->subpath;
+			break;
+		case T_WindowAggPath:
+			subpath = ((WindowAggPath *) path)->subpath;
+			break;
+		case T_SetOpPath:
+			subpath = ((SetOpPath *) path)->subpath;
+			break;
+		case T_LockRowsPath:
+			subpath = ((LockRowsPath *) path)->subpath;
+			break;
+		case T_LimitPath:
+			subpath = ((LimitPath *) path)->subpath;
+			break;
+
+		/*
+		 * Extract list of sub paths.
+		 */
+		case T_ModifyTablePath:
+			subpaths = ((ModifyTablePath *) path)->subpaths;
+			break;
+		case T_CustomPath:
+			subpaths = ((CustomPath *) path)->custom_paths;
+			break;
+		case T_AppendPath:
+		case T_MergeAppendPath:
+			subpaths = ((AppendPath *) path)->subpaths;
+			break;
+
+		/*
+		 * Extract inner and outer paths of a join
+		 */
+		case T_NestPath:
+		case T_MergePath:
+		case T_HashPath:
+			if (walker(((JoinPath *) path)->outerjoinpath, context))
+				return true;
+			if (walker(((JoinPath *) path)->innerjoinpath, context))
+				return true;
+			break;
+
+		default:
+			break;
+	}
+
+	if (subpaths != NIL)
+		 return path_walk_members(subpaths, walker, context);
+
+	if (subpath)
+		return path_walker(subpath, walker, context);
+
+	return false;
+}

@@ -15,8 +15,7 @@
 #include "planpass.h"
 
 void
-exec_plan(char *squery, PlannedStmt *pstmt, ParamListInfo paramLI,
-														const char *serverName)
+exec_plan(char *squery, PlannedStmt *pstmt, const char *serverName)
 {
 	CachedPlanSource	*psrc;
 	CachedPlan			*cplan;
@@ -25,23 +24,15 @@ exec_plan(char *squery, PlannedStmt *pstmt, ParamListInfo paramLI,
 	int					eflags = 0;
 	Oid					*param_types = NULL;
 
-	Assert(squery && pstmt && paramLI);
+	Assert(squery && pstmt);
 	debug_query_string = strdup(squery);
 	psrc = CreateCachedPlan(NULL, squery, NULL);
 
-	if (paramLI->numParams > 0)
-	{
-		int i;
-
-		param_types = palloc(sizeof(Oid) * paramLI->numParams);
-		for (i = 0; i < paramLI->numParams; i++)
-			param_types[i] = paramLI->params[i].ptype;
-	}
-	CompleteCachedPlan(psrc, NIL, NULL, param_types, paramLI->numParams, NULL,
+	CompleteCachedPlan(psrc, NIL, NULL, param_types, 0, NULL,
 								NULL, CURSOR_OPT_GENERIC_PLAN, false);
 
 	SetRemoteSubplan(psrc, pstmt);
-	cplan = GetCachedPlan(psrc, paramLI, false, NULL);
+	cplan = GetCachedPlan(psrc, NULL, false, NULL);
 
 	receiver = CreateDestReceiver(DestNone);
 
@@ -53,7 +44,7 @@ exec_plan(char *squery, PlannedStmt *pstmt, ParamListInfo paramLI,
 									GetActiveSnapshot(),
 									InvalidSnapshot,
 									receiver,
-									paramLI, NULL,
+									NULL, NULL,
 									0);
 
 		context.pstmt = pstmt;
@@ -88,15 +79,13 @@ exec_plan(char *squery, PlannedStmt *pstmt, ParamListInfo paramLI,
  * Decode base64 string into C-string and return it at same pointer
  */
 void
-deserialize_plan(char **squery, char **splan, char **sparams)
+deserialize_plan(char **squery, char **splan)
 {
 	char	*dec_query,
-			*dec_plan,
-			*dec_params;
+			*dec_plan;
 	int		dec_query_len,
 			len,
-			dec_plan_len,
-			dec_params_len;
+			dec_plan_len;
 
 	dec_query_len = pg_b64_dec_len(strlen(*squery));
 	dec_query = palloc0(dec_query_len + 1);
@@ -108,13 +97,7 @@ deserialize_plan(char **squery, char **splan, char **sparams)
 	len = pg_b64_decode(*splan, strlen(*splan), dec_plan);
 	Assert(dec_plan_len >= len);
 
-	dec_params_len = pg_b64_dec_len(strlen(*sparams));
-	dec_params = palloc0(dec_params_len + 1);
-	len = pg_b64_decode(*sparams, strlen(*sparams), dec_params);
-	Assert(dec_params_len >= len);
-
 	*squery = dec_query;
 	*splan = dec_plan;
-	*sparams = dec_params;
 }
 

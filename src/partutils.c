@@ -2,11 +2,56 @@
  * partutils.c
  *
  */
-#include "partutils.h"
-
+#include "postgres.h"
 #include "optimizer/paths.h"
 #include "partitioning/partbounds.h"
+#include "partutils.h"
 
+
+Distribution
+InitDistribution(RelOptInfo *rel)
+{
+	Distribution dist = palloc(sizeof(DistributionData));
+	Bitmapset *servers = NULL;
+	int partno;
+
+	dist->part_scheme = rel->part_scheme;
+	dist->partexprs = rel->partexprs;
+
+	for (partno = 0; partno < rel->nparts; partno++)
+		servers = bms_add_member(servers, rel->part_rels[partno]->serverid);
+
+	dist->nparts = bms_num_members(servers);
+	Assert(dist->nparts > 0);
+	dist->servers = bms_copy(servers);
+	return dist;
+}
+
+Distribution
+InitStealthDistribution(RelOptInfo *rel, const Bitmapset *servers)
+{
+	Distribution dist = palloc(sizeof(DistributionData));
+
+	dist->part_scheme = rel->part_scheme;
+	dist->partexprs = rel->partexprs;
+	dist->nparts = bms_num_members(servers);
+	Assert(dist->nparts > 0);
+	dist->servers = bms_copy(servers);
+	return dist;
+}
+
+Distribution
+InitBCastDistribution(const Bitmapset *servers)
+{
+	Distribution dist = palloc(sizeof(DistributionData));
+
+	dist->part_scheme = NULL;
+	dist->partexprs = NULL;
+	dist->nparts = bms_num_members(servers);
+	Assert(dist->nparts > 0);
+	dist->servers = bms_copy(servers);
+	return dist;
+}
 
 bool
 build_joinrel_partition_info(RelOptInfo *joinrel, RelOptInfo *outer_rel,

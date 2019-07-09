@@ -17,23 +17,31 @@
 
 #include "nodes/extensible.h"
 #include "optimizer/planner.h"
+
+#include "common.h"
 #include "dmq.h"
+#include "partutils.h"
 
 
-#define EXCHANGE_NAME			"EXCHANGE"
-#define EXCHANGEPATHNAME		"Exchange"
-#define EXCHANGEPLANNAME		"ExchangePlanNode"
+#define EXCHANGE_STATE_NAME		"ExchangeStateNode"
+#define EXCHANGE_PATH_NAME		"ExchangePathNode"
+#define EXCHANGE_PLAN_NAME		"ExchangePlanNode"
 #define EXCHANGE_PRIVATE_NAME	"ExchangePlanPrivate"
 
-#define IsExchangeNode(pathnode) \
-	((((Path *) pathnode)->pathtype == T_CustomScan) && \
-	(strcmp(((CustomPath *)(pathnode))->methods->CustomName, \
-	EXCHANGEPATHNAME) == 0))
+#define IsExchangePathNode(node) \
+	(IsA(node, CustomPath) && \
+	(strcmp(((CustomPath *)(node))->methods->CustomName, \
+			EXCHANGE_PATH_NAME) == 0))
 
 #define IsExchangePlanNode(node) \
 	(IsA(node, CustomScan) && \
 	(strcmp(((CustomScan *)(node))->methods->CustomName, \
-	EXCHANGEPLANNAME) == 0))
+	EXCHANGE_PLAN_NAME) == 0))
+
+#define IsExchangeStateNode(node) \
+	(IsA(node, CustomScanState) && \
+	(strcmp(((CustomScanState *)(node))->methods->CustomName, \
+	EXCHANGE_STATE_NAME) == 0))
 
 
 #define cstmSubPath1(customPath) (Path *) linitial(((CustomPath *) \
@@ -60,7 +68,7 @@ typedef struct EPPNode
 
 	int16 natts;
 	Oid *funcid;
-	List *att_exprs;
+	List *exprs;
 	ExchangeMode mode;
 } EPPNode;
 
@@ -91,6 +99,7 @@ typedef struct ExchangeState
 } ExchangeState;
 
 extern uint32 exchange_counter;
+
 /*
  * Structure for private path data. It is used at paths generating step only.
  */
@@ -98,12 +107,13 @@ typedef struct ExchangePath
 {
 	CustomPath cp;
 
-	RelOptInfo	altrel;
-	RelOptInfo *innerrel_ptr;
-	RelOptInfo *outerrel_ptr;
-
-	uint32 exchange_counter; // Debug purposes only
 	ExchangeMode mode; /* It will send all tuples to a coordinator only. */
+	/*
+	 * Source data for a tuples distribution function building.
+	 * Assume the NULL value means that the distribution corresponds to
+	 * relation partitioning scheme and no tuples shuffling needed.
+	 */
+	Distribution dist;
 } ExchangePath;
 
 extern Bitmapset *accumulate_part_servers(RelOptInfo *rel);
@@ -111,11 +121,11 @@ extern void set_exchange_altrel(ExchangeMode mode, ExchangePath *path,
 		RelOptInfo *outerrel, RelOptInfo *innerrel, List *restrictlist,
 		Bitmapset *servers);
 extern void EXCHANGE_Init_methods(void);
-extern List *exchange_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
-							   RangeTblEntry *rte);
+extern List *distributedscan_pathlist(PlannerInfo *root, RelOptInfo *rel,
+									  RangeTblEntry *rte);
 extern CustomScan *make_exchange(List *custom_plans, List *tlist);
 extern ExchangePath *create_exchange_path(PlannerInfo *root, RelOptInfo *rel,
-		  	  	  	  	  	  	  	  	  	 Path *children, ExchangeMode mode);
+						Path *children, ExchangeMode mode, Distribution dist);
 extern void createNodeName(char *nodeName, const char *hostname, int port);
 extern void cost_exchange(PlannerInfo *root, RelOptInfo *baserel,
 														ExchangePath *expath);

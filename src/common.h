@@ -17,6 +17,7 @@
 
 #include "nodes/pg_list.h"
 #include "nodes/plannodes.h"
+#include "nodes/relation.h"
 #include "storage/lock.h"
 #include "dmq.h"
 
@@ -46,6 +47,7 @@ extern MemoryContext memory_context;
 extern ExchangeSharedState *ExchShmem;
 extern bool enable_distributed_execution;
 
-bool plan_tree_walker(Plan *plan, bool (*walker) (), void *context);
+extern bool plan_tree_walker(Plan *plan, bool (*walker) (), void *context);
+extern bool path_walker(Path *path, bool (*walker) (), void *context);
 
 #endif /* COMMON_H_ */

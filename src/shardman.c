@@ -123,7 +123,7 @@ _PG_init()
 
 	/* Install hooks */
 	PreviousProcessUtilityHook = ProcessUtility_hook;
-	ProcessUtility_hook = ShmnProcessUtility;
+//	ProcessUtility_hook = ShmnProcessUtility;
 	EXEC_Hooks_init();
 	dmq_init("shardman");
 }
@@ -507,21 +507,14 @@ pg_exec_plan(PG_FUNCTION_ARGS)
 {
 	char	*squery = TextDatumGetCString(PG_GETARG_DATUM(0)),
 			*splan = TextDatumGetCString(PG_GETARG_DATUM(1)),
-			*sparams = TextDatumGetCString(PG_GETARG_DATUM(2)),
-			*serverName = TextDatumGetCString(PG_GETARG_DATUM(3)),
-			*start_address;
+			*serverName = TextDatumGetCString(PG_GETARG_DATUM(2));
 	PlannedStmt *pstmt;
-	ParamListInfo paramLI;
 
-	deserialize_plan(&squery, &splan, &sparams);
+	deserialize_plan(&squery, &splan);
 
 	pstmt = (PlannedStmt *) stringToNode(splan);
 
-	/* Deserialize parameters of the query */
-	start_address = sparams;
-	paramLI = RestoreParamList(&start_address);
-
-	exec_plan(squery, pstmt, paramLI, serverName);
+	exec_plan(squery, pstmt, serverName);
 	PG_RETURN_VOID();
 }
 
