@@ -288,7 +288,7 @@ BeginDistPlanExec(CustomScanState *node, EState *estate, int eflags)
 		if (cscan->custom_private == NIL)
 			return;
 
-		dpe->nconns = list_length(cscan->custom_private) - 1;
+		dpe->nconns = list_length(cscan->custom_private);
 		dpe->conn = palloc(sizeof(PGconn *) * dpe->nconns);
 
 		host = GetMyServerName(&port);
@@ -476,7 +476,8 @@ create_distexec_path(PlannerInfo *root, RelOptInfo *rel, Path *children,
 	path->custom_private = NIL;
 
 	while ((member = bms_next_member(servers, member)) >= 0)
-		path->custom_private = lappend_oid(path->custom_private, (Oid) member);
+		if (member > 0)
+			path->custom_private = lappend_oid(path->custom_private, (Oid) member);
 
 	path->methods = &distplanexec_path_methods;
 
@@ -868,7 +869,7 @@ init_exchange_channel(PlanState *node, void *context)
 	for (i = 0; i < state->nnodes; i++)
 	{
 		int j = state->indexes[i];
-elog(LOG, "RECV %d/%d %d", i, state->nnodes, j);
+
 		if (j >= 0)
 		{
 			char c;
