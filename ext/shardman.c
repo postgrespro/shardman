@@ -93,7 +93,7 @@ _PG_init()
 	/* Install hooks */
 	PreviousProcessUtilityHook = ProcessUtility_hook;
 	// ProcessUtility_hook = HPProcessUtility;
-	// ProcessUtility_hook = ShmnProcessUtility;
+	ProcessUtility_hook = ShmnProcessUtility;
 
 	postgres_fdw_PG_init();
 }
