@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------
  *
  * common.c
- *		Common code for ParGRES extension
+ * 		Common code for ParGRES extension
  *
  * Copyright (c) 2018, Postgres Professional
  *
@@ -24,8 +24,8 @@
 #include "common.h"
 
 
-MemoryContext memory_context = NULL;
-ExchangeSharedState *ExchShmem = NULL;
+MemoryContext DPGMemoryContext = NULL;
+ExchangeSharedState *DPGShmem = NULL;
 bool enable_distributed_execution;
 
 static bool
@@ -131,7 +131,7 @@ path_walk_members(List *paths, bool (*walker) (), void *context)
 }
 
 bool
-path_walker(Path *path, bool (*walker) (), void *context)
+path_walker(const Path *path, bool (*walker) (), void *context)
 {
 	Path	*subpath = NULL;
 	List	*subpaths = NIL;
@@ -223,8 +223,42 @@ path_walker(Path *path, bool (*walker) (), void *context)
 	if (subpaths != NIL)
 		 return path_walk_members(subpaths, walker, context);
 
-	if (subpath)
-		return path_walker(subpath, walker, context);
+	if (subpath != NULL)
+		return walker(subpath, context);
 
 	return false;
+}
+
+void
+OnNodeDisconnect(const char *node_name)
+{
+	HASH_SEQ_STATUS status;
+	DMQDestinations *dest;
+	Oid serverid = InvalidOid;
+
+	elog(LOG, "Node %s: disconnected", node_name);
+
+
+	LWLockAcquire(DPGShmem->lock, LW_EXCLUSIVE);
+
+	hash_seq_init(&status, DPGShmem->htab);
+
+	while ((dest = hash_seq_search(&status)) != NULL)
+	{
+		if (!(strcmp(dest->node, node_name) == 0))
+			continue;
+
+		serverid = dest->serverid;
+		dmq_detach_receiver(node_name);
+		dmq_destination_drop(node_name);
+		break;
+	}
+	hash_seq_term(&status);
+
+	if (OidIsValid(serverid))
+		hash_search(DPGShmem->htab, &serverid, HASH_REMOVE, NULL);
+	else
+		elog(LOG, "Record on disconnected server %u with name %s not found.",
+														serverid, node_name);
+	LWLockRelease(DPGShmem->lock);
 }

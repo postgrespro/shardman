@@ -80,7 +80,7 @@ SDP_Alloc(int size)
 	TupleBuffer *buf = NULL;
 	MemoryContext OldMemoryContext;
 
-	OldMemoryContext = MemoryContextSwitchTo(memory_context);
+	OldMemoryContext = MemoryContextSwitchTo(DPGMemoryContext);
 
 	/* To avoid palloc/free overheads we can store buffers */
 	for (lc = list_head(freebufs); lc != NULL; lc = lnext(lc))
@@ -120,7 +120,7 @@ SDP_Free(StreamDataPackage *buffer)
 	TupleBuffer *buf = (TupleBuffer *) buffer;
 	MemoryContext OldMemoryContext;
 
-	OldMemoryContext = MemoryContextSwitchTo(memory_context);
+	OldMemoryContext = MemoryContextSwitchTo(DPGMemoryContext);
 
 	Assert(IsSDPBuf(buffer));
 	buf->curptr = NULL;

@@ -23,33 +23,6 @@
 #include "partutils.h"
 
 
-#define EXCHANGE_STATE_NAME		"ExchangeStateNode"
-#define EXCHANGE_PATH_NAME		"ExchangePathNode"
-#define EXCHANGE_PLAN_NAME		"ExchangePlanNode"
-#define EXCHANGE_PRIVATE_NAME	"ExchangePlanPrivate"
-
-#define IsExchangePathNode(node) \
-	(IsA(node, CustomPath) && \
-	(strcmp(((CustomPath *)(node))->methods->CustomName, \
-			EXCHANGE_PATH_NAME) == 0))
-
-#define IsExchangePlanNode(node) \
-	(IsA(node, CustomScan) && \
-	(strcmp(((CustomScan *)(node))->methods->CustomName, \
-	EXCHANGE_PLAN_NAME) == 0))
-
-#define IsExchangeStateNode(node) \
-	(IsA(node, CustomScanState) && \
-	(strcmp(((CustomScanState *)(node))->methods->CustomName, \
-	EXCHANGE_STATE_NAME) == 0))
-
-
-#define cstmSubPath1(customPath) (Path *) linitial(((CustomPath *) \
-									customPath)->custom_paths)
-
-#define cstmSubPlan1(custom) ((Plan *) linitial(((CustomScan *) \
-									custom)->custom_plans))
-
 typedef enum ExchangeMode
 {
 	EXCH_GATHER,
@@ -75,28 +48,58 @@ typedef struct EPPNode
 typedef struct ExchangeState
 {
 	CustomScanState	css;
-	char stream[256];
-	DMQDestCont	*dests;
-	bool init;
-	EState *estate;
-	bool hasLocal;
-	int activeRemotes;
+	char			stream[256];
+	DMQDestCont		*dests;
+	bool			init;
+	EState			*estate;
+	bool			hasLocal;
+	int				activeRemotes;
+
+	/* DEBUG info */
 	int ltuples;
 	int rtuples;
 	int stuples;
 
 	/* Partitioning info */
-	int greatest_modulus;
-	int16 partnatts;
-	FmgrInfo *partsupfunc;
-	List *partexprs;
-	List *keystate;
-	int nnodes; /* number of instances containing partitions */
-	NodeName *nodes; /* Unique signature of each instance */
-	int *indexes;
+	int			greatest_modulus;
+	int16		partnatts;
+	FmgrInfo	*partsupfunc;
+	List		*partexprs;
+	List		*keystate;
+	int			nnodes; /* number of instances containing partitions */
+	NodeName	*nodes; /* Unique signature of each instance */
+	int			*indexes;
 	ExchangeMode mode;
 	IndexOptInfo *indexinfo;
 } ExchangeState;
+
+#define EXCHANGE_STATE_NAME		"ExchangeStateNode"
+#define EXCHANGE_PATH_NAME		"ExchangePathNode"
+#define EXCHANGE_PLAN_NAME		"ExchangePlanNode"
+#define EXCHANGE_PRIVATE_NAME	"ExchangePlanPrivate"
+
+#define IsExchangePathNode(node) \
+	(IsA(node, CustomPath) && \
+	(strcmp(((CustomPath *)(node))->methods->CustomName, \
+			EXCHANGE_PATH_NAME) == 0))
+
+#define IsExchangePlanNode(node) \
+	(IsA(node, CustomScan) && \
+	(strcmp(((CustomScan *)(node))->methods->CustomName, \
+	EXCHANGE_PLAN_NAME) == 0))
+
+#define IsExchangeStateNode(node) \
+	(IsA(node, CustomScanState) && \
+	(strcmp(((CustomScanState *)(node))->methods->CustomName, \
+	EXCHANGE_STATE_NAME) == 0))
+
+
+#define cstmSubPath1(path) (Path *) linitial(((CustomPath *) \
+									path)->custom_paths)
+
+#define cstmSubPlan1(plan) ((Plan *) linitial(((CustomScan *) \
+									plan)->custom_plans))
+
 
 extern uint32 exchange_counter;
 
@@ -129,5 +132,10 @@ extern ExchangePath *create_exchange_path(PlannerInfo *root, RelOptInfo *rel,
 extern void createNodeName(char *nodeName, const char *hostname, int port);
 extern void cost_exchange(PlannerInfo *root, RelOptInfo *baserel,
 														ExchangePath *expath);
+extern Distribution InitDistributionFunc(ExchangeMode mode,
+				const ExchangePath *oexch,
+					 const ExchangePath *iexch, JoinPath *jp,
+					 const Bitmapset *servers);
+
 
 #endif /* EXCHANGE_H_ */

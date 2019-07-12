@@ -28,6 +28,7 @@
 #include "utils/rel.h"
 
 #include "exchange.h"
+#include "shardman.h"
 #include "stream.h"
 
 
@@ -195,7 +196,7 @@ EstablishDMQConnections(const lcontext *context, const char *serverName,
 	dmq_data->nservers = nservers;
 	dmq_data->dests = palloc(nservers * sizeof(DMQDestinations));
 
-	LWLockAcquire(ExchShmem->lock, LW_EXCLUSIVE);
+	LWLockAcquire(DPGShmem->lock, LW_EXCLUSIVE);
 	while ((sid = bms_next_member(context->servers, sid)) >= 0)
 	{
 		bool found;
@@ -214,7 +215,7 @@ EstablishDMQConnections(const lcontext *context, const char *serverName,
 		if (strcmp(serverName, receiverName) == 0)
 			coordinator_num = i;
 
-		sub = (DMQDestinations *) hash_search(ExchShmem->htab, &sid,
+		sub = (DMQDestinations *) hash_search(DPGShmem->htab, &sid,
 														HASH_ENTER, &found);
 		if (!found)
 		{
@@ -224,14 +225,14 @@ EstablishDMQConnections(const lcontext *context, const char *serverName,
 			sprintf(connstr, "host=%s port=%d "
 							 "fallback_application_name=%s",
 							 host, port, senderName);
-			elog(LOG, "CONN STR: %s", connstr);
+			shmn_log3("CONN STR: %s", connstr);
 			sub->dest_id = dmq_destination_add(connstr, senderName, receiverName, 10);
 			memcpy(sub->node, receiverName, strlen(receiverName) + 1);
 		}
 		dmq_attach_receiver(receiverName, 0);
 		memcpy(&dmq_data->dests[i++], sub, sizeof(DMQDestinations));
 	}
-	LWLockRelease(ExchShmem->lock);
+	LWLockRelease(DPGShmem->lock);
 
 	/* if coordinator_num == -1 - I'm the Coordinator */
 	dmq_data->coordinator_num = coordinator_num;
@@ -392,7 +393,7 @@ CreateDistExecPlan(PlannerInfo *root, RelOptInfo *rel,
 }
 
 void
-DistExec_Init_methods(void)
+DISPATCH_Init_methods(void)
 {
 	/* Initialize path generator methods */
 	distplanexec_path_methods.CustomName = DISTEXECPATHNAME;
@@ -804,9 +805,9 @@ dmq_init_barrier(DMQDestCont *dmq_data, PlanState *child)
 	for (i = 0; i < dmq_data->nservers; i++)
 		while (dmq_get_destination_status(dmq_data->dests[i].dest_id) != Active);
 
-	elog(LOG, "DMQ INIT BARRIER");
+	shmn_log3("DMQ INIT BARRIER");
 	init_exchange_channel(child, (void *) dmq_data);
-	elog(LOG, "END DMQ INIT BARRIER");
+	shmn_log3("END DMQ INIT BARRIER");
 }
 
 /*
@@ -879,4 +880,13 @@ init_exchange_channel(PlanState *node, void *context)
 		}
 	}
 	return false;
+}
+
+bool
+HasDispatcherNode(const Path *path, const void *context)
+{
+	if (IsDispatcherNode(path))
+		return true;
+
+	return path_walker(path, HasDispatcherNode, NULL);
 }

@@ -25,29 +25,37 @@ typedef char NodeName[256];
 
 typedef struct
 {
-	Oid serverid;
-	DmqDestinationId dest_id;
-	NodeName node;
+	Oid					serverid;
+	NodeName			node;
+	DmqDestinationId	dest_id;
 } DMQDestinations;
 
 typedef struct
 {
-	int nservers;
-	DMQDestinations *dests;
-	int coordinator_num;
+	int				nservers;
+	int				coordinator_num;
+	DMQDestinations	*dests;
 } DMQDestCont;
 
 typedef struct
 {
 	LWLock	*lock;
+
+	/* It stores existed DMQ connections. Shared between backends. */
 	HTAB	*htab;
+
+	/* Used for unique stream name generation in EXCHANGE node */
+	volatile pg_atomic_uint64	exchangeID;
 } ExchangeSharedState;
 
-extern MemoryContext memory_context;
-extern ExchangeSharedState *ExchShmem;
-extern bool enable_distributed_execution;
+
+extern MemoryContext		DPGMemoryContext;
+extern ExchangeSharedState	*DPGShmem;
+extern bool					enable_distributed_execution;
+
 
 extern bool plan_tree_walker(Plan *plan, bool (*walker) (), void *context);
-extern bool path_walker(Path *path, bool (*walker) (), void *context);
+extern bool path_walker(const Path *path, bool (*walker) (), void *context);
+extern void OnNodeDisconnect(const char *node_name);
 
 #endif /* COMMON_H_ */

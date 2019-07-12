@@ -1,10 +1,12 @@
 /* ------------------------------------------------------------------------
  *
  * exchange.c
- *		This module contains the EXHCANGE custom node implementation
+ *		EXHCANGE custom node implementation
  *
+ * It provides an functionality for data transfer during query plan execution.
+ * Behaviour of node defines by mode and distribution function fields.
  *
- * Copyright (c) 2018, Postgres Professional
+ * Copyright (c) 2018 - 2019, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -35,6 +37,7 @@
 #include "common.h"
 #include "exchange.h"
 #include "partutils.h"
+#include "shardman.h"
 #include "stream.h"
 
 /*
@@ -52,39 +55,6 @@ static CustomScanMethods		exchange_plan_methods;
 static CustomExecMethods		exchange_exec_methods;
 static ExtensibleNodeMethods	exchange_plan_private;
 
-/* XXX: Need to be placed in shared memory */
-uint32 exchange_counter = 0;
-
-#define ZPS \
-{ \
-		.strategy = PARTITION_STRATEGY_HASH, \
-		.partnatts = 0, \
-		.partopfamily = NULL, \
-		.partopcintype = NULL, \
-		.partcollation = NULL, \
-		.parttyplen = NULL, \
-		.parttypbyval = NULL, \
-		.partsupfunc = NULL \
-};
-
-
-#define ZBI \
-{ \
-		.strategy = PARTITION_STRATEGY_HASH, \
-		.ndatums = 0, \
-		.datums = NULL, \
-		.kind = NULL, \
-		.indexes = NULL, \
-		.null_index = -1, \
-		.default_index = -1 \
-};
-
-PartitionSchemeData ZERO_PART_SCHEME = ZPS;
-PartitionBoundInfoData ZERO_BOUND_INFO = ZBI;
-PartitionSchemeData BCAST_PART_SCHEME = ZPS;
-PartitionBoundInfoData BCAST_BOUND_INFO = ZBI;
-PartitionSchemeData STEALTH_PART_SCHEME = ZPS;
-PartitionBoundInfoData STEALTH_BOUND_INFO = ZBI;
 
 static void nodeOutExchangePrivate(struct StringInfoData *str,
 								   const struct ExtensibleNode *node);
@@ -235,8 +205,6 @@ EXCHANGE_Init_methods(void)
 	exchange_exec_methods.ReInitializeDSMCustomScan = EXCHANGE_ReInitializeDSM;
 	exchange_exec_methods.ShutdownCustomScan		= NULL;
 	exchange_exec_methods.ExplainCustomScan			= EXCHANGE_Explain;
-
-	DistExec_Init_methods();
 }
 
 Bitmapset *
@@ -256,8 +224,6 @@ accumulate_part_servers(RelOptInfo *rel)
 	}
 	return servers;
 }
-
-#include "optimizer/cost.h"
 
 void
 cost_exchange(PlannerInfo *root, RelOptInfo *rel, ExchangePath *expath)
@@ -336,13 +302,14 @@ ExchangeCreateCustomPlan(PlannerInfo *root,
 	char *streamName = palloc(DMQ_NAME_MAXLEN);
 	ExchangePath *path = (ExchangePath *) best_path;
 	EPPNode *private = (EPPNode *) newNode(sizeof(EPPNode), T_ExtensibleNode);
+	uint64 exchange_counter = pg_atomic_add_fetch_u64(&DPGShmem->exchangeID, 1);
 
 	exchange = make_exchange(custom_plans, tlist);
 	private->node.extnodename = EXCHANGE_PRIVATE_NAME;
 
 	/* Add stream name into private field*/
 	host = GetMyServerName(&port);
-	sprintf(streamName, "%s-%d-%d", host, port, exchange_counter++);
+	sprintf(streamName, "%s-%d-%lu", host, port, exchange_counter);
 	exchange->custom_private = lappend(exchange->custom_private, makeString(streamName));
 
 	/*
@@ -353,7 +320,7 @@ ExchangeCreateCustomPlan(PlannerInfo *root,
 	if (path->dist == NULL)
 	{
 		Assert(path->mode == EXCH_GATHER || path->mode == EXCH_STEALTH);
-		path->dist = InitDistribution(rel);
+		path->dist = InitGatherDistribution(rel);
 	}
 	Assert(path->dist->nparts >= 0);
 
@@ -577,6 +544,7 @@ create_exchange_path(PlannerInfo *root, RelOptInfo *rel, Path *children,
 	epath->mode = mode;
 	cost_exchange(root, rel, epath); /* Change at next step*/
 
+	/* TODO: tune cost model for broadcast-shuffle right decision */
 	return epath;
 }
 
@@ -788,7 +756,7 @@ EXCHANGE_Execute(CustomScanState *node)
 
 		readRemote = !readRemote;
 
-		if ((state->activeRemotes > 0) /*&& readRemote */)
+		if ((state->activeRemotes > 0))
 		{
 			int status;
 			status = RecvTuple(state->stream, node->ss.ss_ScanTupleSlot);
@@ -798,17 +766,20 @@ EXCHANGE_Execute(CustomScanState *node)
 			case -1:
 				/* No tuples currently */
 				break;
+
 			case 0:
 				Assert(!TupIsNull(node->ss.ss_ScanTupleSlot));
 				state->rtuples++;
 				return node->ss.ss_ScanTupleSlot;
+
 			case 1:
 				state->activeRemotes--;
-				elog(LOG, "[%s %d] GOT NULL. activeRemotes: %d, lt=%d, rt=%d hasLocal=%hhu st=%d",
-						state->stream, state->mode, state->activeRemotes,
-						state->ltuples,
-						state->rtuples, state->hasLocal, state->stuples);
+				shmn_log3("EXCHANGE node [%s %d] CATCH EOT: lt: %d rt: %d st: %d, ar: %d hl: %hhu",
+						state->stream, state->mode, state->ltuples,
+						state->rtuples, state->stuples, state->activeRemotes,
+						state->hasLocal);
 				break;
+
 			default:
 				/* Any system message */
 				break;
@@ -822,8 +793,8 @@ EXCHANGE_Execute(CustomScanState *node)
 
 			if (TupIsNull(slot))
 			{
-				elog(LOG, "[%s] FINISH Local store: l=%d, r=%d s=%d, activeRemotes=%d",
-						state->stream, state->ltuples,
+				shmn_log3("EXCHANGE node [%s %d] EOLS: lt: %d, rt: %d st: %d, ar: %d",
+						state->stream, state->mode, state->ltuples,
 						state->rtuples, state->stuples, state->activeRemotes);
 				if (state->mode != EXCH_STEALTH)
 				{
@@ -842,8 +813,9 @@ EXCHANGE_Execute(CustomScanState *node)
 
 		if ((state->activeRemotes == 0) && (!state->hasLocal))
 		{
-			elog(LOG, "[%s] Exchange returns NULL. Tuples: local=%d, remote=%d, send=%d",
-					state->stream, state->ltuples, state->rtuples, state->stuples);
+			shmn_log3("EXCHANGE node [%s %d] return. lt: %d rt: %d st: %d",
+					state->stream, state->mode, state->ltuples, state->rtuples,
+					state->stuples);
 			return NULL;
 		}
 
@@ -952,7 +924,6 @@ EXCHANGE_Explain(CustomScanState *node, List *ancestors, ExplainState *es)
 	}
 
 	appendStringInfo(&str, "mode: %s, stream: %s. ", mode, state->stream);
-
 	ExplainPropertyText("Exchange", str.data, es);
 }
 
@@ -985,4 +956,73 @@ void
 createNodeName(char *nodeName, const char *hostname, int port)
 {
 	sprintf(nodeName, "%s-%d", hostname, port);
+}
+
+/*
+ * Init new distribution function by distribution contained at GATHER node -
+ * top node of the sub path.
+ * If the function pointer is NULL, we can use partitioning info to contruct new
+ * function.
+ * Notice that BROADCAST node destroys any distribution.
+ */
+Distribution
+InitDistributionFunc(ExchangeMode mode, const ExchangePath *oexch,
+					 const ExchangePath *iexch, JoinPath *jp,
+					 const Bitmapset *servers)
+{
+	Distribution dist = NULL;
+	bool IsPartDist = false;
+
+	/* Sanity check */
+	Assert(oexch && IsExchangePathNode(oexch));
+	Assert(servers && bms_num_members(servers) > 0);
+
+	/* Default partitioning has changed by exchange operations? */
+	if (oexch->dist == NULL)
+		IsPartDist = true;
+
+	switch (mode)
+	{
+	case EXCH_GATHER:
+		if (IsPartDist)
+			dist = InitGatherDistribution(oexch->cp.path.parent);
+		else
+			dist = build_joinrel_distributionFn(oexch->dist, iexch->dist, jp->jointype);
+		Assert(dist->part_scheme != NULL && dist->partexprs != NULL &&
+				bms_num_members(dist->servers) > 0 && dist->nparts > 0);
+		break;
+
+	case EXCH_STEALTH:
+		Assert(iexch == NULL && jp == NULL);
+		if (IsPartDist)
+			dist = InitStealthDistribution(oexch->cp.path.parent);
+		else
+		{
+			/* Keep the incoming distribution. */
+			Assert(oexch->dist->part_scheme != NULL);
+			dist = oexch->dist;
+		}
+		Assert(dist->part_scheme != NULL && dist->partexprs != NULL &&
+				bms_num_members(dist->servers) > 0 && dist->nparts > 0);
+
+		break;
+
+	case EXCH_BROADCAST:
+		Assert(iexch == NULL && jp == NULL && servers != NULL);
+		/* Eliminate distribution coming from the subtree */
+		dist = InitBCastDistribution(servers);
+		break;
+
+	case EXCH_SHUFFLE:
+		/*
+		 * SHUFFLE changes distribution and not interested in previous.
+		 */
+		Assert(0);
+		break;
+
+	default:
+		Assert(0);
+	}
+
+	return dist;
 }

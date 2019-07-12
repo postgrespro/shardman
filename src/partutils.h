@@ -23,14 +23,16 @@ typedef struct
 
 typedef DistributionData *Distribution;
 
-extern Distribution InitDistribution(RelOptInfo *rel);
-extern Distribution InitStealthDistribution(RelOptInfo *rel,
-													const Bitmapset *servers);
+extern Distribution InitGatherDistribution(RelOptInfo *rel);
+extern Distribution InitStealthDistribution(RelOptInfo *rel);
 extern Distribution InitBCastDistribution(const Bitmapset *servers);
 extern bool build_joinrel_partition_info(RelOptInfo *joinrel,
 										 RelOptInfo *outer_rel,
 										 RelOptInfo *inner_rel,
 										 List *restrictlist,
 										 JoinType jointype);
+extern Distribution build_joinrel_distributionFn(const Distribution odist,
+												 const Distribution idist,
+												 JoinType jointype);
 
 #endif /* PARTUTILS_H_ */

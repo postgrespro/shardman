@@ -124,7 +124,7 @@ _PG_init()
 	/* Install hooks */
 	PreviousProcessUtilityHook = ProcessUtility_hook;
 	ProcessUtility_hook = ShmnProcessUtility;
-	EXEC_Hooks_init();
+	Hooks_init();
 	dmq_init("shardman");
 }
 

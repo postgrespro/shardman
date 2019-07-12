@@ -12,6 +12,7 @@
 
 #include "common.h"
 #include "sbuf.h"
+#include "shardman.h"
 #include "stream.h"
 
 #define IsDeliveryMessage(msg)	(SDP_Size((StreamDataPackage *) msg) == SDPHeaderSize)
@@ -67,7 +68,7 @@ Stream_subscribe(const char *streamName)
 	if (istream || ostream)
 		return false;
 
-	OldMemoryContext = MemoryContextSwitchTo(memory_context);
+	OldMemoryContext = MemoryContextSwitchTo(DPGMemoryContext);
 
 	/* It is unique stream name */
 	istream = (IStream *) palloc(sizeof(IStream));
@@ -149,7 +150,7 @@ RecvIfAny(void)
 			return;
 		}
 
-		OldMemoryContext = MemoryContextSwitchTo(memory_context);
+		OldMemoryContext = MemoryContextSwitchTo(DPGMemoryContext);
 
 		if ((msg->index > istream->indexes[sender_id]) || IsDeliveryMessage(msg))
 		{
@@ -171,9 +172,6 @@ RecvIfAny(void)
 				buf->sid = sender_id;
 				buf->ptr = palloc(size);
 				memcpy(buf->ptr, (char *) msg, size);
-				elog(LOG, "Got sys msg sender_id=%d, msg->index=%u, cur inde=%lu buf->ptr->index=%u",
-						sender_id, msg->index, istream->indexes[sender_id], buf->ptr->index);
-
 
 				istream->msgs = lappend(istream->msgs, buf);
 				istream->indexes[sender_id] = buf->ptr->index;
@@ -189,7 +187,7 @@ RecvIfAny(void)
 				SDP_PrepareToRead(msg);
 				while (!SDP_IsEmpty(msg))
 					tuplestore_puttuple(istream->RecvStore, SDP_Get_tuple(msg));
-				elog(LOG, "tuplestore %d", msg->index);
+
 				istream->indexes[sender_id] = msg->index;
 			}
 		}
@@ -231,7 +229,7 @@ checkDelivery(OStream *ostream, SendBuf *sendbuf)
 
 	istream = (IStream *) get_stream(istreams, ostream->streamName);
 	Assert(istream);
-	OldMemoryContext = MemoryContextSwitchTo(memory_context);
+	OldMemoryContext = MemoryContextSwitchTo(DPGMemoryContext);
 	/* Search for the delivery message and all duplicates. */
 	foreach(lc, istream->deliveries)
 	{
@@ -281,7 +279,7 @@ getOutBuffer(OStream *ostream, DmqDestinationId dest_id)
 			return buf;
 	}
 
-	OldMemoryContext = MemoryContextSwitchTo(memory_context);
+	OldMemoryContext = MemoryContextSwitchTo(DPGMemoryContext);
 
 	buf = palloc(sizeof(SendBuf));
 	buf->dest_id = dest_id;
@@ -351,7 +349,7 @@ wait_for_delivery(OStream *ostream, SendBuf *sendbuf)
 			if (checkDelivery(ostream, sendbuf))
 				return;
 		}
-//		elog(LOG, "BEFORE StreamRepeatSend");
+
 		StreamRepeatSend(ostream, sendbuf);
 	}
 
@@ -395,15 +393,11 @@ SendByteMessage(DmqDestinationId dest_id, char *stream, char tag,
 	sendbuf->buf = buf;
 	sendbuf->dest_id = dest_id;
 
-elog(LOG, "-> [%s] SendByteMessage: dest_id=%d, tag=%c sz: %lu index=%u, stream=%s",
-		stream, dest_id, tag, SDP_Size(buf), buf->index, stream);
 	while (!dmq_push_buffer(dest_id, stream, buf, SDP_Size(buf), true))
 		RecvIfAny();
-//	elog(LOG, "-> SendByteMessage: 1");
+
 	if (buf->needConfirm)
 		wait_for_delivery(ostream, sendbuf);
-
-	elog(LOG, "-> SendByteMessage: CONFIRMED");
 }
 
 char
@@ -413,7 +407,7 @@ RecvByteMessage(const char *streamName, const char *sender)
 	ListCell *lc;
 	MemoryContext OldMemoryContext;
 
-	OldMemoryContext = MemoryContextSwitchTo(memory_context);
+	OldMemoryContext = MemoryContextSwitchTo(DPGMemoryContext);
 
 	RecvIfAny();
 
@@ -431,7 +425,7 @@ RecvByteMessage(const char *streamName, const char *sender)
 
 			istream->msgs = list_delete_ptr(istream->msgs, buf);
 			Assert(!IsSDPBuf(buf->ptr));
-			elog(LOG, "RECV BYTE message %c recv index=%u, sid=%d", tag, buf->ptr->index, buf->sid);
+
 			pfree(buf);
 			MemoryContextSwitchTo(OldMemoryContext);
 
@@ -477,7 +471,7 @@ RecvTuple(char *streamName, TupleTableSlot *slot)
 		{
 		case END_OF_TUPLES:
 			/* No tuples from network */
-			elog(LOG, "--- END_OF_TUPLES ---, [%s] sid=%d, index=%u, store: %ld EOF: %hhu",
+			shmn_log3("EOT. [%s] sid: %d index: %u store: %ld EOF: %hhu",
 					streamName, buf->sid, buf->ptr->index,
 					tuplestore_tuple_count(istream->RecvStore),
 					tuplestore_ateof(istream->RecvStore));
@@ -499,38 +493,4 @@ RecvTuple(char *streamName, TupleTableSlot *slot)
 	list_free(temp);
 
 	return status;
-}
-
-void
-OnNodeDisconnect(const char *node_name)
-{
-	HASH_SEQ_STATUS status;
-	DMQDestinations *dest;
-	Oid serverid = InvalidOid;
-
-	elog(LOG, "Node %s: disconnected", node_name);
-
-
-	LWLockAcquire(ExchShmem->lock, LW_EXCLUSIVE);
-
-	hash_seq_init(&status, ExchShmem->htab);
-
-	while ((dest = hash_seq_search(&status)) != NULL)
-	{
-		if (!(strcmp(dest->node, node_name) == 0))
-			continue;
-
-		serverid = dest->serverid;
-		dmq_detach_receiver(node_name);
-		dmq_destination_drop(node_name);
-		break;
-	}
-	hash_seq_term(&status);
-
-	if (OidIsValid(serverid))
-		hash_search(ExchShmem->htab, &serverid, HASH_REMOVE, NULL);
-	else
-		elog(LOG, "Record on disconnected server %u with name %s not found.",
-														serverid, node_name);
-	LWLockRelease(ExchShmem->lock);
 }

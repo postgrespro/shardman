@@ -9,12 +9,13 @@
 
 
 Distribution
-InitDistribution(RelOptInfo *rel)
+InitGatherDistribution(RelOptInfo *rel)
 {
-	Distribution dist = palloc(sizeof(DistributionData));
-	Bitmapset *servers = NULL;
-	int partno;
+	Distribution	dist = palloc(sizeof(DistributionData));
+	Bitmapset		*servers = NULL;
+	int				partno;
 
+	Assert(rel->part_scheme != NULL);
 	dist->part_scheme = rel->part_scheme;
 	dist->partexprs = rel->partexprs;
 
@@ -23,20 +24,27 @@ InitDistribution(RelOptInfo *rel)
 
 	dist->nparts = bms_num_members(servers);
 	Assert(dist->nparts > 0);
-	dist->servers = bms_copy(servers);
+	dist->servers = servers;
 	return dist;
 }
 
 Distribution
-InitStealthDistribution(RelOptInfo *rel, const Bitmapset *servers)
+InitStealthDistribution(RelOptInfo *rel)
 {
-	Distribution dist = palloc(sizeof(DistributionData));
+	Distribution	dist = palloc(sizeof(DistributionData));
+	Bitmapset		*servers = NULL;
+	int				partno;
 
+	Assert(rel->part_scheme != NULL);
 	dist->part_scheme = rel->part_scheme;
 	dist->partexprs = rel->partexprs;
+
+	for (partno = 0; partno < rel->nparts; partno++)
+		servers = bms_add_member(servers, rel->part_rels[partno]->serverid);
+
 	dist->nparts = bms_num_members(servers);
 	Assert(dist->nparts > 0);
-	dist->servers = bms_copy(servers);
+	dist->servers = servers;
 	return dist;
 }
 
@@ -203,4 +211,77 @@ build_joinrel_partition_info(RelOptInfo *joinrel, RelOptInfo *outer_rel,
 		joinrel->nullable_partexprs[cnt] = nullable_partexpr;
 	}
 	return true;
+}
+
+Distribution
+build_joinrel_distributionFn(const Distribution odist, const Distribution idist,
+		JoinType jointype)
+{
+	PartitionScheme	ps;
+	Distribution	dist = palloc0(sizeof(DistributionData));
+	int				cnt;
+
+	Assert(odist->part_scheme != NULL || idist->part_scheme != NULL);
+	ps = (odist->part_scheme != NULL) ? odist->part_scheme : idist->part_scheme;
+	Assert(ps != NULL);
+	dist->partexprs = (List **) palloc0(sizeof(List *) * ps->partnatts);
+
+	for (cnt = 0; cnt < ps->partnatts; cnt++)
+	{
+		List	   *outer_expr = NIL;
+		List	   *outer_null_expr = NIL;
+		List	   *inner_expr = NIL;
+		List	   *inner_null_expr = NIL;
+		List	   *partexpr = NIL;
+		List	   *nullable_partexpr = NIL;
+
+		/* In the case of BCAST partexprs field will be NULL */
+		if (odist->partexprs != NULL)
+			outer_expr = list_copy(odist->partexprs[cnt]);
+		if (idist->partexprs != NULL)
+			inner_expr = list_copy(idist->partexprs[cnt]);
+
+		switch (jointype)
+		{
+			case JOIN_INNER:
+				partexpr = list_concat(outer_expr, inner_expr);
+				nullable_partexpr = list_concat(outer_null_expr,
+												inner_null_expr);
+				break;
+
+			case JOIN_SEMI:
+			case JOIN_ANTI:
+				partexpr = outer_expr;
+				nullable_partexpr = outer_null_expr;
+				break;
+
+			case JOIN_LEFT:
+				partexpr = outer_expr;
+				nullable_partexpr = list_concat(inner_expr,
+												outer_null_expr);
+				nullable_partexpr = list_concat(nullable_partexpr,
+												inner_null_expr);
+				break;
+
+			case JOIN_FULL:
+				nullable_partexpr = list_concat(outer_expr,
+												inner_expr);
+				nullable_partexpr = list_concat(nullable_partexpr,
+												outer_null_expr);
+				nullable_partexpr = list_concat(nullable_partexpr,
+												inner_null_expr);
+				break;
+
+			default:
+				elog(ERROR, "unrecognized join type: %d", (int) jointype);
+
+		}
+
+		dist->part_scheme = ps;
+		dist->partexprs[cnt] = partexpr;
+		Assert(bms_equal(odist->servers, idist->servers));
+		dist->servers = bms_copy(odist->servers);
+		dist->nparts = bms_num_members(dist->servers);
+	}
+	return dist;
 }

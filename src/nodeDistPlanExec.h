@@ -30,11 +30,11 @@ typedef struct
 extern char destsName[10];
 #define DISTEXECPATHNAME	"DistExecPath"
 
-#define IsDistExecNode(pathnode) ((((Path *) pathnode)->pathtype == T_CustomScan) && \
+#define IsDispatcherNode(pathnode) ((((Path *) pathnode)->pathtype == T_CustomScan) && \
 	(strcmp(((CustomPath *)pathnode)->methods->CustomName, DISTEXECPATHNAME) == 0))
 
 extern Bitmapset *extractForeignServers(CustomPath *path);
-extern void DistExec_Init_methods(void);
+extern void DISPATCH_Init_methods(void);
 extern CustomScan *make_distplanexec(List *custom_plans, List *tlist, List *private_data);
 extern CustomPath *create_distexec_path(PlannerInfo *root, RelOptInfo *rel,
 								  Path *children, const Bitmapset *servers);
@@ -46,5 +46,6 @@ extern void EstablishDMQConnections(const lcontext *context,
 									const char *serverName,
 									EState *estate,
 									PlanState *substate);
+extern bool HasDispatcherNode(const Path *path, const void *context);
 
 #endif							/* NODEDISTPLANEXEC_H */

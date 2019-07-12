@@ -2258,7 +2258,7 @@ index 2af0832e50..380ba11a78 100644
  #include "access/htup_details.h"
  #include "access/subtrans.h"
  #include "access/transam.h"
-@@ -1520,9 +1522,35 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
+@@ -1520,8 +1522,34 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
  									   hdr->nabortrels, abortrels,
  									   gid);
  
@@ -2274,7 +2274,7 @@ index 2af0832e50..380ba11a78 100644
 +
  	ProcArrayRemove(proc, latestXid);
  
- 	/*
++	/*
 +	 * Stamp our transaction with GlobalCSN in GlobalCsnLog.
 +	 * Should be called after ProcArrayEndTransaction, but before releasing
 +	 * transaction locks, since TransactionIdGetGlobalCSN relies on
@@ -2290,10 +2290,9 @@ index 2af0832e50..380ba11a78 100644
 +				   pg_atomic_read_u64(&proc->assignedGlobalCsn)));
 +	}
 +
-+	/*
+ 	/*
  	 * In case we fail while running the callbacks, mark the gxact invalid so
  	 * no one else will try to commit/rollback, and so it will be recycled if
- 	 * we fail after this point.  It is still locked by our backend so it
 @@ -2510,3 +2538,132 @@ PrepareRedoRemove(TransactionId xid, bool giveWarning)
  
  	return;
@@ -2486,10 +2485,11 @@ index e958dbc6af..bd48c78477 100644
  	END_CRIT_SECTION();
  
  	/* Compute latestXid while we have the child XIDs handy */
-@@ -2098,6 +2112,21 @@ CommitTransaction(void)
+@@ -2097,6 +2111,21 @@ CommitTransaction(void)
+ 	 */
  	ProcArrayEndTransaction(MyProc, latestXid);
  
- 	/*
++	/*
 +	 * Stamp our transaction with GlobalCSN in GlobalCsnLog.
 +	 * Should be called after ProcArrayEndTransaction, but before releasing
 +	 * transaction locks.
@@ -2504,10 +2504,9 @@ index e958dbc6af..bd48c78477 100644
 +		GlobalSnapshotCommit(MyProc, xid, nsubxids, subxids);
 +	}
 +
-+	/*
+ 	/*
  	 * This is all post-commit cleanup.  Note that if an error is raised here,
  	 * it's too late to abort the transaction.  This should be just
- 	 * noncritical resource releasing.
 diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
 index bc9024847b..af82e91bf7 100644
 --- a/src/backend/access/transam/xlog.c
@@ -2775,6 +2774,35 @@ index 5922e60eed..370c74f6ad 100644
  					return NULL;
  
  				/*
+diff --git a/src/backend/executor/nodeNestloop.c b/src/backend/executor/nodeNestloop.c
+index 9ae9863226..b045f89cd4 100644
+--- a/src/backend/executor/nodeNestloop.c
++++ b/src/backend/executor/nodeNestloop.c
+@@ -21,6 +21,7 @@
+ 
+ #include "postgres.h"
+ 
++#include "commands/extension.h"
+ #include "executor/execdebug.h"
+ #include "executor/nodeNestloop.h"
+ #include "miscadmin.h"
+@@ -114,6 +115,16 @@ ExecNestLoop(PlanState *pstate)
+ 			if (TupIsNull(outerTupleSlot))
+ 			{
+ 				ENL1_printf("no outer tuple, ending join");
++				if (get_extension_oid("shardman", true) != InvalidOid)
++				{
++					TupleTableSlot *slot;
++
++					ExecReScan(innerPlan);
++					do
++					{
++						slot = ExecProcNode(innerPlan);
++					} while (!TupIsNull(slot));
++				}
+ 				return NULL;
+ 			}
+ 
 diff --git a/src/backend/nodes/outfuncs.c b/src/backend/nodes/outfuncs.c
 index f5d786d79a..19f7c52232 100644
 --- a/src/backend/nodes/outfuncs.c
@@ -3250,10 +3278,11 @@ index 77910d909b..dd2b9cb056 100644
  	else
  		local_node->constvalue = readDatum(local_node->constbyval);
  
-@@ -2528,6 +2568,118 @@ _readPartitionRangeDatum(void)
+@@ -2527,6 +2567,118 @@ _readPartitionRangeDatum(void)
+ 	READ_DONE();
  }
  
- /*
++/*
 + * _readRelOptInfo
 + */
 +static RelOptInfo *
@@ -3365,10 +3394,9 @@ index 77910d909b..dd2b9cb056 100644
 +	READ_DONE();
 +}
 +
-+/*
+ /*
   * parseNodeString
   *
-  * Given a character string representing a node tree, parseNodeString creates
 @@ -2786,6 +2938,12 @@ parseNodeString(void)
  		return_value = _readPartitionBoundSpec();
  	else if (MATCH("PARTITIONRANGEDATUM", 19))
@@ -3699,6 +3727,32 @@ index 77910d909b..dd2b9cb056 100644
 +
 +	return res;
 +}
+diff --git a/src/backend/optimizer/plan/planner.c b/src/backend/optimizer/plan/planner.c
+index 0f46914e54..16488b0219 100644
+--- a/src/backend/optimizer/plan/planner.c
++++ b/src/backend/optimizer/plan/planner.c
+@@ -6850,8 +6850,8 @@ apply_scanjoin_target_to_paths(PlannerInfo *root,
+ 	 * pathlist here, then allow generate_gather_paths to add path(s) to the
+ 	 * main list, and finally zap the partial pathlist.
+ 	 */
+-	if (rel_is_partitioned)
+-		rel->pathlist = NIL;
++	/* if (rel_is_partitioned)
++		rel->pathlist = NIL; */
+ 
+ 	/*
+ 	 * If the scan/join target is not parallel-safe, partial paths cannot
+@@ -6876,8 +6876,8 @@ apply_scanjoin_target_to_paths(PlannerInfo *root,
+ 	}
+ 
+ 	/* Finish dropping old paths for a partitioned rel, per comment above */
+-	if (rel_is_partitioned)
+-		rel->partial_pathlist = NIL;
++	/*if (rel_is_partitioned)
++		rel->partial_pathlist = NIL; */
+ 
+ 	/* Extract SRF-free scan/join target. */
+ 	scanjoin_target = linitial_node(PathTarget, scanjoin_targets);
 diff --git a/src/backend/storage/ipc/ipci.c b/src/backend/storage/ipc/ipci.c
 index 091244dde8..15c19e0698 100644
 --- a/src/backend/storage/ipc/ipci.c
@@ -3753,18 +3807,18 @@ diff --git a/src/backend/storage/ipc/latch.c b/src/backend/storage/ipc/latch.c
 index e6706f7fb8..93dc2f0bda 100644
 --- a/src/backend/storage/ipc/latch.c
 +++ b/src/backend/storage/ipc/latch.c
-@@ -78,6 +78,11 @@ struct WaitEventSet
+@@ -77,6 +77,11 @@ struct WaitEventSet
+ 	int			nevents;		/* number of registered events */
  	int			nevents_space;	/* maximum number of events in this set */
  
- 	/*
++	/*
 +	 * L1-list of free events linked by "pos" and terminated by -1.
 +	 */
 +	int			free_events;
 +
-+	/*
+ 	/*
  	 * Array, of nevents_space length, storing the definition of events this
  	 * set is waiting for.
- 	 */
 @@ -92,6 +97,11 @@ struct WaitEventSet
  	Latch	   *latch;
  	int			latch_pos;
@@ -3921,7 +3975,7 @@ index e6706f7fb8..93dc2f0bda 100644
  	event->fd = fd;
  	event->events = events;
  	event->user_data = user_data;
-@@ -714,19 +791,48 @@ AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd, Latch *latch,
+@@ -714,18 +791,47 @@ AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd, Latch *latch,
  #endif
  	}
  
@@ -3948,7 +4002,7 @@ index e6706f7fb8..93dc2f0bda 100644
  	return event->pos;
  }
  
- /*
++/*
 + * Remove event with specified socket descriptor
 + */
 +void
@@ -3968,10 +4022,9 @@ index e6706f7fb8..93dc2f0bda 100644
 +#endif
 +}
 +
-+/*
+ /*
   * Change the event mask and, in the WL_LATCH_SET case, the latch associated
   * with the WaitEvent.
-  *
 @@ -737,7 +843,7 @@ ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch)
  {
  	WaitEvent  *event;
@@ -4528,7 +4581,7 @@ index e6025ecedb..8ef731d560 100644
 +GlobalCSNLogControlLock				46
 +GlobalSnapshotXidMapLock			47
 diff --git a/src/backend/storage/lmgr/proc.c b/src/backend/storage/lmgr/proc.c
-index 94b203f0fb..139651ac6f 100644
+index 6ad504453b..838cc5fc6e 100644
 --- a/src/backend/storage/lmgr/proc.c
 +++ b/src/backend/storage/lmgr/proc.c
 @@ -37,6 +37,7 @@
@@ -4974,10 +5027,11 @@ index 3051c9cf8e..93a4b6ce8b 100644
  #include "access/rmgr.h"
  #include "access/transam.h"
  #include "access/twophase.h"
-@@ -1013,6 +1014,15 @@ static struct config_bool ConfigureNamesBool[] =
+@@ -1012,6 +1013,15 @@ static struct config_bool ConfigureNamesBool[] =
+ 		false,
  		NULL, NULL, NULL
  	},
- 	{
++	{
 +		{"track_global_snapshots", PGC_POSTMASTER, RESOURCES_MEM,
 +			gettext_noop("Enable global snapshot tracking."),
 +			gettext_noop("Used to achieve REPEATEBLE READ isolation level for postgres_fdw transactions.")
@@ -4986,10 +5040,9 @@ index 3051c9cf8e..93a4b6ce8b 100644
 +		false, /* XXX: Seems that RESOURCES_MEM isn't the best catagory */
 +		NULL, NULL, NULL
 +	},
-+	{
+ 	{
  		{"ssl", PGC_SIGHUP, CONN_AUTH_SSL,
  			gettext_noop("Enables SSL connections."),
- 			NULL
 @@ -2343,6 +2353,16 @@ static struct config_int ConfigureNamesInt[] =
  		NULL, NULL, NULL
  	},
@@ -5214,10 +5267,11 @@ index f7c4c9188c..f2fbc77fa8 100644
  {
  	uint32		i;
  
-@@ -1584,6 +1585,62 @@ XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot)
+@@ -1583,6 +1584,62 @@ XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot)
+ 	return false;
  }
  
- /*
++/*
 + * XidInMVCCSnapshot
 + *
 + * Check whether this xid is in snapshot, taking into account fact that
@@ -5273,10 +5327,9 @@ index f7c4c9188c..f2fbc77fa8 100644
 +	}
 +}
 +
-+/*
+ /*
   * Is the tuple really only locked?  That is, is it not updated?
   *
-  * It's easy to check just infomask bits if the locker is not a multi; but
 diff --git a/src/bin/initdb/initdb.c b/src/bin/initdb/initdb.c
 index 687409b96a..0701c4c217 100644
 --- a/src/bin/initdb/initdb.c
@@ -5730,10 +5783,10 @@ index a8a5a8f4c0..1563407824 100644
  
  /*
 diff --git a/src/test/perl/PostgresNode.pm b/src/test/perl/PostgresNode.pm
-index c222b4fc91..9fabb8f11e 100644
+index d1e3c36a24..f71b539fc2 100644
 --- a/src/test/perl/PostgresNode.pm
 +++ b/src/test/perl/PostgresNode.pm
-@@ -1939,6 +1939,37 @@ sub pg_recvlogical_upto
+@@ -1940,6 +1940,37 @@ sub pg_recvlogical_upto
  	}
  }
  
