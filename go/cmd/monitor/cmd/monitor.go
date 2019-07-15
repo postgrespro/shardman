@@ -317,6 +317,7 @@ func monWorkerMain(ctx context.Context, rgid int, in <-chan clusterState, wg *sy
 func monWorkerFull(w *monWorker) {
 	// w.log("DEBUG: monWorkerFull")
 	var err error
+	var tx *pgx.Tx
 	if w.conn == nil {
 		connconfig, err := pgx.ParseConnectionString(w.connstr)
 		if err != nil {
@@ -332,6 +333,11 @@ func monWorkerFull(w *monWorker) {
 			w.retryTimer = time.NewTimer(retryConnInterval)
 			return
 		}
+	}
+	tx, err = w.conn.Begin()
+	if err != nil {
+		w.Warnf("failed to begin xact: %v", err)
+		goto ConnError
 	}
 	for rgid, rg := range w.clstate.rgs {
 		if rgid == w.rgid {
@@ -402,6 +408,11 @@ func monWorkerFull(w *monWorker) {
 				goto ConnError
 			}
 		}
+	}
+	err = tx.Commit()
+	if err != nil {
+		w.Warnf("failed to commit xact: %v", err)
+		goto ConnError
 	}
 
 	// all is ok, defuse timer
