@@ -90,6 +90,7 @@ Stream_subscribe(const char *streamName)
 	ostreams = lappend(ostreams, ostream);
 	dmq_stream_subscribe(streamName);
 	MemoryContextSwitchTo(OldMemoryContext);
+	elog(LOG, "streamName: %s", streamName);
 	return true;
 }
 

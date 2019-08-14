@@ -227,6 +227,7 @@ EstablishDMQConnections(const lcontext *context, const char *serverName,
 							 host, port, senderName);
 			shmn_log3("CONN STR: %s", connstr);
 			sub->dest_id = dmq_destination_add(connstr, senderName, receiverName, 10);
+			elog(LOG, "dmq_destination_add. receiverName: %s", receiverName);
 			memcpy(sub->node, receiverName, strlen(receiverName) + 1);
 		}
 		dmq_attach_receiver(receiverName, 0);
