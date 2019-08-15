@@ -80,7 +80,7 @@ distributedscan_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 		 */
 		return NIL;
 	}
-
+Assert(0);
 	/*
 	 * We may need exchange paths only for the partitioned relations.
 	 * In the case of scanning only one partition, planner will use FDW.
@@ -251,7 +251,7 @@ create_distributed_join_paths(PlannerInfo *root, RelOptInfo *joinrel,
 
 		if (!IsDispatcherNode(ipath))
 			continue;
-
+		Assert(0);
 		foreach(lc1, opaths)
 		{
 			CustomPath		*opath = (CustomPath *) lfirst(lc1);
