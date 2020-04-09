@@ -51,10 +51,13 @@ by directly specifying in `--extra-vars` or by setting vars in `custom_vars.yml`
 -- this file is read by every play and not tracked by git. Playbooks operate on
 `nodes` and `etcd_nodes` groups; `inventory_manual` has an example of simple
 inventory.  `provision.yml` installs everything needed: etcd, postgres, stolon,
-shardman. Also, during execution of etcd role, a etcd cluster is configured
-(unless `etcd_service` skipped). `init.yml` inits single shardman cluster:
-it instantiates all needed service files, starts `shardman-bowl` daemons and
-executes `shardman-ladle`, creating cluster and adding `nodes` to it.
+shardman. Note that we need patched Stolon (keeper priority, etc) as well as
+patched PG (distributed planner/executor, global snapshots, etc); defaults in
+`group_vars/all.yml` contain paths to proper repositories. Also, during
+execution of etcd role, a etcd cluster is configured (unless `etcd_service`
+skipped). `init.yml` inits single shardman cluster: it instantiates all needed
+service files, starts `shardman-bowl` daemons and executes `shardman-ladle`,
+creating cluster and adding `nodes` to it.
 
 `shardman-ladle` accepts config file specifying cluster
 configuration. `init.yml` creates it from template `shmnspec.json.j2` where
