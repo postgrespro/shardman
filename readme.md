@@ -93,7 +93,7 @@ reachable directly by the client (not via `postgres_fdw`).
 
 Simple `bowl.yml` can be used for common daemons management, e.g. to stop
 everything:
-```
+```sh
 ansible-playbook -i inventory_manual/ bowl.yml -e "state=stopped"
 ```
 
@@ -101,17 +101,17 @@ ansible-playbook -i inventory_manual/ bowl.yml -e "state=stopped"
 
 Probably simplest way to test things is to fire up 4 nodes via `vagrant up` with
 provided example:
-```
+```sh
 cd devops/
 cp Vagrantfile.example Vagrantfile
 vagrant up
 ```
 Inventory for them is listed in `inventory_manual.example`. Uncomment it like
-```
+```sh
 sed -e 's/# \?//' inventory_manual/manual.example > inventory_manual/manual
 ```
 and then
-```
+```sh
 # install and activate python env with installed ansible
 pipenv install && pipenv shell
 ansible-playbook -i inventory_manual/ provision.yml
@@ -125,7 +125,7 @@ REL\_11\_STABLE_40dde829070d.patch applied). This can be altered to use
 repository with patched PG instead; see all.yml.
 
 Then
-```
+```sh
 ansible-playbook -i inventory_manual/ init.yml
 ```
 creates shardman cluster. Namely, it
@@ -140,7 +140,7 @@ creates shardman cluster. Namely, it
 All functions are in `shardman` schema.
 
 Function
-```
+```sql
 hash_shard_table(relid regclass, nparts int, colocate_with regclass = null) returns void
 ```
 
@@ -155,7 +155,7 @@ TABLE`. `shardman.broadcast_utility` GUC which can be set at any time controls
 this behaviour: when `off`, no statements are broadcasted.
 
 Example:
-```
+```sql
 create table pt (id serial, payload real) partition by hash(id);
 select shardman.hash_shard_table('pt', 10);
 ```
@@ -164,7 +164,12 @@ To execute a piece of SQL manually on all repgroups,
 ```
 bcst_all_sql(cmd text) returns void
 ```
-can be used.
+can be used. That way, the final set of commands to create and fill up sharded table may look like:
+```sql
+SELECT shardman.bcst_all_sql('CREATE TABLE test (id integer primary key, company_id integer) PARTITION BY hash(id)');
+SELECT shardman.hash_shard_table('test', 4);
+INSERT INTO test SELECT s, s/20 FROM generate_series(1, 10000) s;
+```
 
 New repgroups can be added at any time with `shardman-ladle addnodes`. Initially
 they don't hold any data; to rebalance, use `shardmanctl rebalance`.
