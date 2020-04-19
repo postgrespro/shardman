@@ -135,8 +135,26 @@ creates shardman cluster. Namely, it
   to register all nodes. Cluster specification is instantiated from `shmnspec.json.j2`;
   cluster name and path to data dir is taken from ansible vars (defaults in `group_vars/all.yml`)
 
+Use
+```sh
+shardman/devops
+╘═> vagrant ssh node1
+
+vagrant@vg1:~$ sudo -iu ubuntu
+```
+to get into the cluster node. Then use
+```sh
+ubuntu@vg1:~$ shardmanctl getconnstr --cluster-name haha
+dbname=postgres host=vg2,vg1,vg3,vg4,vg3,vg4,vg1,vg2 port=5432,5433,5432,5433,5433,5432,5432,5433 user=ubuntu
+```
+to get Postgres connstring and
+```sh
+ubuntu@vg1:~$ psql "dbname=postgres host=vg1 port=5432 user=ubuntu"
+```
+to open `psql` console.
 
 ### Using the cluster
+
 All functions are in `shardman` schema.
 
 Function
