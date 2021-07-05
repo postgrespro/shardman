@@ -12,7 +12,9 @@
     - stolon
 
 - name: build stolon
-  command: "{{ stolon_src }}/build"
+  command: "make"
+  args:
+    chdir: "{{ stolon_src }}"
   tags:
     - stolon
 

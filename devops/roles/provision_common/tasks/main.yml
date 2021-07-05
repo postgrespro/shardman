@@ -48,6 +48,7 @@
   get_url:
     url: "{{ golang_link }}"
     dest: "{{ansible_env.HOME}}/go.tar.gz"
+    timeout: 300
   tags:
     - golang
 
