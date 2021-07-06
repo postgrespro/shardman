@@ -4,24 +4,36 @@ Vagrant.configure("2") do |config|
     node.vm.box = "ubuntu/xenial64"
     node.vm.network "private_network", ip: "10.42.42.10"
     node.vm.hostname = "vg1"
+    node.vm.provider :virtualbox do |v|
+      v.memory = 3072
+    end
   end
 
   config.vm.define "node2" do |node|
     node.vm.box = "ubuntu/xenial64"
     node.vm.network "private_network", ip: "10.42.42.20"
     node.vm.hostname = "vg2"
+    node.vm.provider :virtualbox do |v|
+      v.memory = 3072
+    end
   end
 
   config.vm.define "node3" do |node|
     node.vm.box = "ubuntu/xenial64"
     node.vm.network "private_network", ip: "10.42.42.30"
     node.vm.hostname = "vg3"
+    node.vm.provider :virtualbox do |v|
+      v.memory = 3072
+    end
   end
 
   config.vm.define "node4" do |node|
     node.vm.box = "ubuntu/xenial64"
     node.vm.network "private_network", ip: "10.42.42.40"
     node.vm.hostname = "vg4"
+    node.vm.provider :virtualbox do |v|
+      v.memory = 3072
+    end
   end
 
   # ssh-copy-id
